@@ -28,14 +28,14 @@ Open source. Built with Claude Code. One button to undo.
 
 ## Install
 
-About ten minutes. You need a Google TV or Android TV (Android 12 or newer) and a computer on the same Wi-Fi.
+About ten minutes. You need a Google TV or Android TV (Android 11 or newer in this modified build) and a computer on the same Wi-Fi.
 
 ### The easy way: Claude Code
 
 1. **On the TV**, turn on developer mode: Settings → System → About → press *Android TV OS build* 7 times. Then Settings → System → Developer options → turn on **USB debugging**. Write down the TV's IP address (Settings → Network & Internet).
 2. **On your computer**, get the code:
    ```bash
-   git clone https://github.com/simbasjungles/free-my-tv && cd free-my-tv
+   git clone https://github.com/LufeMC/lumatv && cd lumatv
    ```
 3. **Open [Claude Code](https://claude.com/claude-code) in that folder** and say:
    > Install Free My TV on my TV at 192.168.1.50. I live in Lisbon.
@@ -46,10 +46,10 @@ About ten minutes. You need a Google TV or Android TV (Android 12 or newer) and 
 ### The manual way
 
 1. **On the TV**, do step 1 above.
-2. **Tools:** a JDK (17+), the Android SDK command-line tools (build-tools 34, platform android-34) and adb. On a Mac:
+2. **Tools:** Install JDK 17, Python 3, Android SDK command-line tools, and adb. On a Mac:
    ```bash
    brew install --cask temurin android-commandlinetools android-platform-tools
-   sdkmanager "build-tools;34.0.0" "platforms;android-34"
+   sdkmanager "build-tools;36.0.0" "platforms;android-36"
    ```
    On Linux, get OpenJDK 17, Android's command-line tools and adb from your package manager, then run the same `sdkmanager` line. On Windows, use WSL.
 3. **Build:**
@@ -131,9 +131,10 @@ It's your code, and Claude Code finds its way around it. Try:
 
 ## How it works
 
-- **A plain Android app, no Gradle, no libraries.** [`build.sh`](build.sh) runs aapt2 → javac → d8 → zipalign → apksigner and makes a 2 MB APK.
+- **A Java Android application without Gradle.** [`build.sh`](build.sh) uses aapt2, javac, d8, zipalign, and apksigner.
+- **Internal playback uses Media3.** [`PLAYBACK.md`](PLAYBACK.md) describes title search, connected add-ons, quality selection, subtitles, audio, and source retry.
 - **It uses the TV's own ADB, from inside the TV.** The app connects to `127.0.0.1:5555` with its own key (that's the *Allow USB debugging?* prompt) and runs the same commands you would: `cmd package set-home-activity`, `settings put secure screensaver_components`, `pm disable-user`. Nothing listens to the network.
-- **Drawn by hand on one Canvas**, with Android 13 shaders for the frosted glass and the sky (plain fills on Android 12).
+- **Drawn by hand on one Canvas**, with Android 13 shaders for the frosted glass and the sky (plain fills on Android 11 and 12).
 - **A safety net.** A watchdog in a separate process brings back the stock home screen after three crashes in five minutes, and a boot check keeps your choice after TV updates.
 - **Data** from TMDB (trending titles, new releases and which app streams what in your country), Open-Meteo (forecast, sunrise and sunset) and Binance (24-hour prices).
 
@@ -157,6 +158,7 @@ No accounts, no analytics, no tracking. The app only talks to TMDB, Open-Meteo (
 
 ## Credits
 
+- Based on [Free My TV](https://github.com/simbasjungles/free-my-tv) by simbasjungles (MIT). This version adds search, a built-in player for Stremio add-ons, and more ([PLAYBACK.md](PLAYBACK.md)).
 - Built with [Claude Code](https://claude.com/claude-code).
 - This product uses the TMDB API but is not endorsed or certified by [TMDB](https://www.themoviedb.org/).
 - Weather data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0). Prices from the [Binance](https://www.binance.com/) public API.

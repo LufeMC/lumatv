@@ -2,8 +2,8 @@
 
 A home screen for Google TV and Android TV that replaces the stock one, plus a settings app that switches between
 Free My TV and the TV's original home screen. A plain Android app in Java, built without Gradle by `build.sh`.
-The website (freemytv.io) is in `docs/`: static HTML, CSS and JS, no build step. A push to `main` that changes it
-publishes it to GitHub Pages (`.github/workflows/pages.yml`). `docs/index.html` (English) and `docs/pt/index.html`
+The website is in `docs/`: static HTML, CSS and JS, no build step. Publishing is paused: `.github/workflows/pages.yml`
+runs only when started by hand. `docs/index.html` (English) and `docs/pt/index.html`
 (Brazilian Portuguese) are the same page in two languages, so change both; visitors from Brazil land on the
 Portuguese one by themselves, and the PT/EN switch in the menu is remembered.
 
@@ -13,10 +13,10 @@ before you do it, and let them do the taps on the TV.
 ## Installing it for someone
 
 1. **Ask** for the TV's IP address and their city, if they didn't say.
-2. **Tools:** a JDK 17+, the Android SDK command-line tools (build-tools 34+, platform android-34) and adb. Check
+2. **Tools:** JDK 17, Python 3, the Android SDK command-line tools (build-tools 36.0.0, platform android-36), and adb. Check
    what's already there (`java -version`, `$ANDROID_HOME`, `adb version`) and install only what's missing.
    - macOS: `brew install --cask temurin android-commandlinetools android-platform-tools`, then
-     `sdkmanager "build-tools;34.0.0" "platforms;android-34"`.
+     `sdkmanager "build-tools;36.0.0" "platforms;android-36"`.
    - Linux: OpenJDK 17, Android's command-line tools and adb from the package manager, then the same `sdkmanager` line.
    - Windows: WSL, then as on Linux.
 3. **Settings:** run `./build.sh` once; it creates `config.properties`. Fill in `latitude` and `longitude` (decimal
@@ -69,7 +69,9 @@ TVs that don't run Google TV or Android TV (Samsung, LG and others): the way is 
 
 ## The code
 
-- Java 8 language level, minSdk 31 (Android 12), targetSdk 33. No Gradle, no libraries: only the Android SDK.
+- Java 8 language level, minSdk 30 (Android 11), targetSdk 33. The build does not use Gradle.
+- Internal playback uses Media3. Python downloads the artifacts specified in `player-dependencies.lock` and verifies their hashes.
+- Read `PLAYBACK.md` before changing search, add-on authorization, source retry, subtitles, or audio selection.
 - The home screen is drawn by hand on one Canvas (`HomeView`); the glass and the sky are AGSL shaders (`Shaders`,
   Android 13+, with a fallback for 12). Keep it at 60 fps: no allocations in `onDraw`, no work on the UI thread.
 - `HomeMode` runs every switch as a background job (`ModeJob`) in the main process; the UI is in the `:home`

@@ -1,10 +1,8 @@
-# Publishes the website in docs/ to GitHub Pages (freemytv.io) whenever it changes on main.
+# Publishes the website in docs/ to GitHub Pages. Paused: it runs only when started by hand from the Actions tab,
+# until LumaTV has a site of its own.
 name: Website
 
 on:
-  push:
-    branches: [main]
-    paths: ["docs/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
