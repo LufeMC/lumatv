@@ -114,7 +114,7 @@ final class WatchOptions {
         JSONObject watch = details.optJSONObject("watch/providers");
         JSONObject countries = watch == null ? null : watch.optJSONObject("results");
         result.catalogChecked = countries != null;
-        String region = Config.TMDB_REGION.trim().toUpperCase(Locale.ROOT);
+        String region = Setup.region();
         Map<String, Option> options = parseCatalog(countries == null ? null : countries.optJSONObject(region));
         for (Service service : SERVICES) {
             Option option = options.get(service.key);

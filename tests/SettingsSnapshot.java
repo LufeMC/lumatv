@@ -13,7 +13,11 @@ final class SettingsSnapshot {
         File file = new File(context.getFilesDir(), "player-test-restore.json");
         if (file.isFile()) restore(context);
         JSONObject values = new JSONObject();
-        for (java.util.Map.Entry<String, ?> item : context.getSharedPreferences("playback-settings", 0).getAll().entrySet()) values.put(item.getKey(), item.getValue());
+        for (java.util.Map.Entry<String, ?> item : context.getSharedPreferences("playback-settings", 0).getAll().entrySet()) {
+            Object v = item.getValue();
+            String type = v instanceof Long ? "long" : v instanceof Integer ? "int" : v instanceof Float ? "float" : v instanceof Boolean ? "bool" : "string";
+            values.put(item.getKey(), new JSONObject().put("t", type).put("v", v instanceof java.util.Set ? new org.json.JSONArray((java.util.Set<?>) v) : v));
+        }
         Files.write(file.toPath(), values.toString().getBytes(StandardCharsets.UTF_8));
     }
     static void restore(Context context) throws Exception {
@@ -21,10 +25,18 @@ final class SettingsSnapshot {
         JSONObject values = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
         SharedPreferences.Editor edit = context.getSharedPreferences("playback-settings", 0).edit().clear();
         java.util.Iterator<String> keys = values.keys();
-        while (keys.hasNext()) { String key = keys.next(); Object value = values.get(key);
-            if (value instanceof String) edit.putString(key, (String) value);
-            else if (value instanceof Boolean) edit.putBoolean(key, (Boolean) value);
-            else if (value instanceof Number) edit.putInt(key, ((Number) value).intValue());
+        while (keys.hasNext()) {
+            String key = keys.next(); Object raw = values.get(key);
+            // Snapshots from before typed values stored the bare value.
+            String type = raw instanceof JSONObject ? ((JSONObject) raw).optString("t") : raw instanceof Boolean ? "bool" : raw instanceof Number ? "long" : "string";
+            Object value = raw instanceof JSONObject ? ((JSONObject) raw).get("v") : raw;
+            switch (type) {
+                case "long": edit.putLong(key, ((Number) value).longValue()); break;
+                case "int": edit.putInt(key, ((Number) value).intValue()); break;
+                case "float": edit.putFloat(key, ((Number) value).floatValue()); break;
+                case "bool": edit.putBoolean(key, (Boolean) value); break;
+                default: edit.putString(key, String.valueOf(value));
+            }
         }
         if (edit.commit()) file.delete();
     }

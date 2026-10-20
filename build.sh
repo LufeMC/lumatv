@@ -39,6 +39,14 @@ number() {
 LAT="$(number latitude 40.7128)"
 LON="$(number longitude -74.0060)"
 ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
+# Version: one number per commit, so every build installs over the last one.
+COMMITS="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo local)"
+VERSION_CODE=$((COMMITS + 100))
+VERSION_NAME="1.1.$COMMITS"
+# --release: a build to publish. It leaves out the TMDB key and home location; each TV enters its own.
+RELEASE=false; for a in "$@"; do [ "$a" = "--release" ] && RELEASE=true; done
+if $RELEASE; then TMDB=""; LAT=40.7128; LON=-74.0060; CITYV=""; else TMDB="$(prop tmdb_key '')"; CITYV="$(prop city '')"; fi
 
 rm -rf out && mkdir -p out/gen/io/freemytv out/classes
 cat > out/gen/io/freemytv/Config.java <<EOF
@@ -48,15 +56,18 @@ package io.freemytv;
 final class Config {
     private Config() {}
 
-    static final String TMDB_KEY = "$(prop tmdb_key '')";
+    static final String TMDB_KEY = "$TMDB";
     static final String TMDB_REGION = "$(prop tmdb_region US)";
     static final String LATITUDE = "$LAT";
     static final String LONGITUDE = "$LON";
-    static final String CITY = "$(prop city '')";
+    static final String CITY = "$CITYV";
     static final String LANGUAGE = "$(prop language auto)";
     static final String CURRENCY = "$(prop currency USD)";
     static final String TEMPERATURE = "$(prop temperature auto)";
     static final boolean DISABLE_ASSISTANT = $ASSIST;
+    static final String VERSION_NAME = "$VERSION_NAME";
+    static final int VERSION_CODE = $VERSION_CODE;
+    static final String COMMIT = "$COMMIT";
 }
 EOF
 
@@ -66,17 +77,37 @@ source ./player-dependencies.sh
 # Fonts uncompressed: Android reads them straight from the APK.
 "$BT/aapt2" link -o out/base.apk -I "$AJ" --manifest app/AndroidManifest.xml --java out/gen --auto-add-overlay \
   --extra-packages "$PLAYER_PACKAGES" "${PLAYER_RES[@]}" out/res.zip \
-  --min-sdk-version 30 --target-sdk-version 33 -A app/assets -0 ttf
+  --min-sdk-version 30 --target-sdk-version 33 -A app/assets -0 ttf \
+  --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" --replace-version
 "$JAVAC" -nowarn -Xlint:-options -source 8 -target 8 -bootclasspath "$AJ:$BT/core-lambda-stubs.jar" -classpath "$AJ:$PLAYER_CP" \
   -d out/classes $(find app/src out/gen -name '*.java')
 "$BT/d8" --release --min-api 30 --lib "$AJ" --output out $(find out/classes -name '*.class') $(find out/player/jars -name '*.jar')
 (cd out && zip -qj base.apk classes*.dex)
 "$BT/zipalign" -f -p 4 out/base.apk out/aligned.apk
 
-# --- Sign with your own key (created once; updates need the same key, so keep freemytv.keystore)
-if [ ! -f freemytv.keystore ]; then
-  "$KEYTOOL" -genkeypair -keystore freemytv.keystore -alias freemytv -keyalg RSA -keysize 2048 -validity 20000 \
-    -storepass freemytv -keypass freemytv -dname "CN=Free My TV" >/dev/null 2>&1
+# --- Sign with your own key. Updates must use the same key, so the build stops rather than make a new one.
+# The password comes from LUMATV_KEY_PASS, else the macOS Keychain (service "lumatv-keystore"), else the default.
+KS=freemytv.keystore
+KS_PASS="${LUMATV_KEY_PASS:-}"
+if [ -z "$KS_PASS" ] && command -v security >/dev/null 2>&1; then
+  KS_PASS="$(security find-generic-password -s lumatv-keystore -w 2>/dev/null || true)"
 fi
-"$BT/apksigner" sign --ks freemytv.keystore --ks-pass pass:freemytv --key-pass pass:freemytv --out FreeMyTV.apk out/aligned.apk
-echo "Built FreeMyTV.apk ($(du -h FreeMyTV.apk | cut -f1)). Install: adb install -r FreeMyTV.apk"
+KS_PASS="${KS_PASS:-freemytv}"
+if [ ! -f "$KS" ]; then
+  if [ "${1:-}" != "--new-key" ]; then
+    echo "No $KS here. TVs only accept updates signed with the same key, so this build stops."
+    echo "Restore your key, or run ./build.sh --new-key to start over (TVs then need the app uninstalled first)."
+    exit 1
+  fi
+  "$KEYTOOL" -genkeypair -keystore "$KS" -alias freemytv -keyalg RSA -keysize 2048 -validity 20000 \
+    -storepass "$KS_PASS" -keypass "$KS_PASS" -dname "CN=LumaTV" >/dev/null 2>&1
+  rm -f signing.sha256
+fi
+"$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" --out FreeMyTV.apk out/aligned.apk
+CERT="$("$BT/apksigner" verify --print-certs FreeMyTV.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)"
+if [ -f signing.sha256 ]; then
+  [ "$CERT" = "$(tr -d '[:space:]' < signing.sha256)" ] || { echo "Signed with a different key than signing.sha256 expects ($CERT). Stopping."; rm -f FreeMyTV.apk; exit 1; }
+else
+  printf '%s\n' "$CERT" > signing.sha256
+fi
+echo "Built FreeMyTV.apk $VERSION_NAME ($(du -h FreeMyTV.apk | cut -f1)). Install: adb install -r FreeMyTV.apk"

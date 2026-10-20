@@ -36,8 +36,8 @@ public class ConnectSourcesActivity extends TvActivity {
         heading.setTypeface(Ui.displaySemibold); heading.setAccessibilityHeading(true); root.addView(heading);
         root.addView(TvWidgets.text(this, Ui.tr("Uma autorização de conta é necessária. Depois, seus complementos serão carregados automaticamente.",
                 "One account approval is required. Your add-ons will then load automatically."), 18));
-        root.addView(TvWidgets.text(this, Ui.tr("Entre no site oficial pelo telefone. Sua senha não passa pelo Free My TV.",
-                "Sign in on the official website with your phone. Free My TV does not receive your password."), 16));
+        root.addView(TvWidgets.text(this, Ui.tr("Entre no site oficial pelo telefone. Sua senha não passa pela LumaTV.",
+                "Sign in on the official website with your phone. LumaTV does not receive your password."), 16));
         root.addView(TvWidgets.text(this, Ui.tr("A TV protege sua conexão com criptografia e atualiza seus complementos automaticamente.",
                 "The TV encrypts your account connection and updates your add-ons automatically."), 16));
         LinearLayout code = new LinearLayout(this); code.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -54,8 +54,8 @@ public class ConnectSourcesActivity extends TvActivity {
         if (automatic) connect.setVisibility(android.view.View.GONE);
         if (!automatic && AddonStore.connected(this)) root.addView(TvWidgets.button(this, Ui.tr("Desconectar conta", "Disconnect account"), v ->
                 new AlertDialog.Builder(this).setTitle(Ui.tr("Desconectar fontes?", "Disconnect sources?"))
-                        .setMessage(Ui.tr("Isso remove os complementos apenas do Free My TV.",
-                                "This removes the add-ons from Free My TV only."))
+                        .setMessage(Ui.tr("Isso remove os complementos apenas da LumaTV.",
+                                "This removes the add-ons from LumaTV only."))
                         .setNegativeButton(Ui.tr("Cancelar", "Cancel"), null)
                         .setPositiveButton(Ui.tr("Desconectar", "Disconnect"), (dialog, which) -> {
                             generation++; AddonStore.clear(this); setResult(RESULT_OK);

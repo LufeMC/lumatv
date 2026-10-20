@@ -13,7 +13,7 @@ public class PreferenceRepair extends Instrumentation {
         try {
             SettingsSnapshot.restore(getTargetContext());
             WatchSnapshot.restore(getTargetContext());
-            getTargetContext().getSharedPreferences("playback-settings", 0).edit().putString("audio-language", "en").remove("audio-title:tt0000000").remove("audio-title:tt0000001").commit();
+            getTargetContext().getSharedPreferences("playback-settings", 0).edit().remove("audio-title:tt0000000").remove("audio-title:tt0000001").commit();
             android.content.SharedPreferences prefs = getTargetContext().getSharedPreferences(ContinueWatching.PREFS, 0);
             JSONArray before = new JSONArray(prefs.getString("local", "[]")), after = new JSONArray(); int repaired = 0;
             for (int i = 0; i < before.length(); i++) {
@@ -30,7 +30,7 @@ public class PreferenceRepair extends Instrumentation {
             for (String name : new String[]{"sample.mkv", "verified.mkv", "placeholder.mkv", "audio-only.mkv", "video-only.mkv", "corrupt.mkv", "truncated.mkv", "subtitle-en.srt", "subtitle-es.srt"})
                 new java.io.File(fixtureFolder, name).delete();
             fixtureFolder.delete();
-            result.putString("stream", "English default saved. Failed-clip progress records repaired: " + repaired + ".\n"); finish(-1, result);
+            result.putString("stream", "Settings restored. Failed-clip progress records repaired: " + repaired + ".\n"); finish(-1, result);
         } catch (Exception error) { result.putString("stream", "FAILED: " + error.getClass().getSimpleName() + "\n"); finish(0, result); }
     }
 }

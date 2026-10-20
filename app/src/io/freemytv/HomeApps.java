@@ -90,6 +90,8 @@ final class HomeApps {
         {"peacock", "Peacock", "com.peacocktv.peacockandroid", "6E55DC", "", "1"},
         {"globoplay", "Globoplay", "com.globo.globotv", "FF5A1F", "tint", "1"},
         {"spotify", "Spotify", "com.spotify.tv.android", "1DB954", "", "1"},
+        {"stremio", "Stremio", "com.stremio.one", "7B5BF5", "", "1.1"},
+        {"sunnxt", "Sun NXT", "com.suntv.sunnxt", "E2263A", "", "1"},
     };
     static final int MAX_SHELF = 8;
     /** Live TV apps of some brands (the antenna's channels open through the standard Android request first). */
@@ -123,9 +125,11 @@ final class HomeApps {
             it.key = d == null ? pkg : d[0];
             it.label = d == null ? appLabel(c, pkg) : d[1];
             it.tile = appTile(c, it.key, pkg, d == null ? 0 : 0xFF000000 | Integer.parseInt(d[3], 16));
+            // Every app gets a logo lifted from its TV art (drawn white on the home screen); when the art can't be
+            // split from its background, the home screen shows the app's name instead.
+            it.logo = shelfLogo(c, d == null ? pkg : d[0], pkg, d == null ? "" : d[4], extract);
+            if (it.logo != null) it.logoInk = ink(it.logo);
             if (d != null) {
-                it.logo = shelfLogo(c, d[0], pkg, d[4], extract);
-                if (it.logo != null) it.logoInk = ink(it.logo);
                 it.logoDark = ownLogoCached(c, d[0] + "-dark");
                 it.logoScale = Float.parseFloat(d[5]);
             }
@@ -216,7 +220,7 @@ final class HomeApps {
         return shortcut(kind, key, label, symbol);
     }
 
-    /** Free My TV settings, in the corner of the home screen. */
+    /** LumaTV settings, in the corner of the home screen. */
     static Item settings() {
         return shortcut(SETTINGS, "settings", Ui.tr("Ajustes", "Settings"), "settings");
     }
@@ -322,7 +326,7 @@ final class HomeApps {
             items.add(it);
         }
         Collections.sort(items, (a, b) -> a.label.toLowerCase(Locale.ROOT).compareTo(b.label.toLowerCase(Locale.ROOT)));
-        items.add(special(c, SETTINGS, "freemytv-settings", "Free My TV", "sparkles"));
+        items.add(special(c, SETTINGS, "freemytv-settings", "LumaTV", "sparkles"));
         return items;
     }
 

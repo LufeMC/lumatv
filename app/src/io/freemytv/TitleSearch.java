@@ -81,7 +81,7 @@ final class TitleSearch {
             Long at = fetched.get(path); long age = at == null ? Long.MAX_VALUE : System.currentTimeMillis() - at;
             if (responses.containsKey(path) && age >= 0 && age < MetadataCache.lifetime(path)) return new JSONObject(responses.get(path));
         }
-        String key = Config.TMDB_KEY.trim();
+        String key = Setup.tmdbKey();
         if (key.isEmpty()) throw new IOException("missing_key");
         String saved = MetadataCache.read(path, System.currentTimeMillis());
         if (saved != null) { remember(path, saved); return new JSONObject(saved); }

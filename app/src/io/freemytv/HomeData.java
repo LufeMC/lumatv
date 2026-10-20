@@ -34,10 +34,13 @@ final class HomeData {
     private static final String CURRENCY = Config.CURRENCY.trim().toUpperCase(Locale.ROOT);
     /** Binance quotes dollars as USDT. */
     private static final String QUOTE = CURRENCY.equals("USD") ? "USDT" : CURRENCY;
-    private static final String WEATHER_URL = "https://api.open-meteo.com/v1/forecast?latitude=" + Config.LATITUDE
-            + "&longitude=" + Config.LONGITUDE
+    /** The weather address for the home location (set on the TV, or in config.properties). */
+    private static String weatherUrl() {
+        return "https://api.open-meteo.com/v1/forecast?latitude=" + Setup.latitude()
+            + "&longitude=" + Setup.longitude()
             + "&current=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset"
             + "&hourly=temperature_2m,weather_code,is_day&timezone=auto&forecast_days=2";
+    }
     private static final long PRICES_EVERY = 5 * 60_000L, WEATHER_EVERY = 30 * 60_000L;
     private static final Locale PT = new Locale("pt", "BR");
 
@@ -131,7 +134,7 @@ final class HomeData {
             weatherAttempt = now; fetchingWeather = true;
             io.execute(() -> {
                 try {
-                    String body = get(WEATHER_URL);
+                    String body = get(weatherUrl());
                     weather = parseWeather(body);
                     weatherAt = System.currentTimeMillis();
                     cache.edit().putString("weather", body).putLong("weatherAt", weatherAt).apply();
@@ -311,7 +314,7 @@ final class HomeData {
     }
 
     private static boolean fahrenheit() {
-        String unit = Config.TEMPERATURE.trim().toUpperCase(Locale.ROOT);
+        String unit = Setup.temperature().toUpperCase(Locale.ROOT);
         if (unit.startsWith("F")) return true;
         if (unit.startsWith("C")) return false;
         return "US".equals(Locale.getDefault().getCountry());
@@ -324,8 +327,8 @@ final class HomeData {
     }
 
     static String hour(long at) {
-        return Ui.en ? new SimpleDateFormat("h a", Locale.US).format(new java.util.Date(at))
-                : new SimpleDateFormat("HH'h'", PT).format(new java.util.Date(at));
+        if (Ui.hours24()) return new SimpleDateFormat(Ui.en ? "H:00" : "HH'h'", Ui.en ? Locale.US : PT).format(new java.util.Date(at));
+        return new SimpleDateFormat("h a", Ui.en ? Locale.US : PT).format(new java.util.Date(at));
     }
 
     /** How long ago the data was fetched, if it's stale (no internet): "12 min ago". */

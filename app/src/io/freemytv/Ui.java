@@ -27,12 +27,15 @@ final class Ui {
     static volatile boolean en = english();
     static Typeface thin, light, displayMedium, displaySemibold, regular, medium, semibold;
     private static boolean loaded;
+    private static volatile Context context;
     private static final Rect BOUNDS = new Rect();
     private static final RectF OVAL = new RectF();
 
     static synchronized void init(Context c) {
         if (loaded) return;
         loaded = true;
+        context = c.getApplicationContext();
+        Setup.init(c);
         TitleArtwork.init(c);
         MetadataCache.init(c);
         ThumbnailCache.init(c);
@@ -127,16 +130,20 @@ final class Ui {
         return en ? english : pt;
     }
 
-    /** "21:47" (in English, "9:47", like the iPhone in the US). */
-    static String clock(long now) {
-        return en ? new SimpleDateFormat("h:mm", Locale.US).format(new Date(now))
-                : new SimpleDateFormat("HH:mm", PT).format(new Date(now));
+    /** The TV's own 12/24-hour setting (Settings → Date & time), not the language. */
+    static boolean hours24() {
+        Context c = context;
+        return c != null ? android.text.format.DateFormat.is24HourFormat(c) : !en;
     }
 
-    /** "5:21" (sunrise and sunset; in English, "5:21 AM"). */
+    /** "21:47", or "9:47" when the TV uses a 12-hour clock. */
+    static String clock(long now) {
+        return new SimpleDateFormat(hours24() ? "H:mm" : "h:mm", en ? Locale.US : PT).format(new Date(now));
+    }
+
+    /** "5:21 AM", or "5:21" with a 24-hour clock. */
     static String time(long at) {
-        return en ? new SimpleDateFormat("h:mm a", Locale.US).format(new Date(at))
-                : new SimpleDateFormat("H:mm", PT).format(new Date(at));
+        return new SimpleDateFormat(hours24() ? "H:mm" : "h:mm a", en ? Locale.US : PT).format(new Date(at));
     }
 
     /** "domingo, 18 de outubro" (lowercase, like the iPhone in Portuguese); "Sunday, October 18" in English. */
