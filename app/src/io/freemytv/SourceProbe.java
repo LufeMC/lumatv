@@ -11,7 +11,28 @@ final class SourceProbe {
     static final int UNKNOWN = 0, CHECKING = 1, AVAILABLE = 2, FAILED = 3, UNCERTAIN = 4;
     static final java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
     static final java.util.concurrent.atomic.AtomicInteger peak = new java.util.concurrent.atomic.AtomicInteger();
+    // Results of recent checks, so a warmed or prefetched source doesn't need checking again.
+    private static final java.util.Map<String, long[]> recent = new java.util.LinkedHashMap<String, long[]>(16, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, long[]> eldest) { return size() > 48; }
+    };
+    static int cached(String url) {
+        synchronized (recent) {
+            long[] saved = recent.get(url);
+            if (saved == null) return UNKNOWN;
+            long age = android.os.SystemClock.elapsedRealtime() - saved[1];
+            // A failure may have been a passing network problem: trust it only briefly.
+            return age < (saved[0] == FAILED ? 2 : 10) * 60000L ? (int) saved[0] : UNKNOWN;
+        }
+    }
+    static void forget(String url) { synchronized (recent) { recent.remove(url); } }
     static int check(AddonStreams.Source source) {
+        int saved = cached(source.url);
+        if (saved == AVAILABLE || saved == FAILED) return saved;
+        int result = probe(source);
+        if (result == AVAILABLE || result == FAILED) synchronized (recent) { recent.put(source.url, new long[]{result, android.os.SystemClock.elapsedRealtime()}); }
+        return result;
+    }
+    private static int probe(AddonStreams.Source source) {
         int count = active.incrementAndGet(); peak.accumulateAndGet(count, Math::max);
         HttpURLConnection connection = null;
         try {
