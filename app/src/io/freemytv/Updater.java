@@ -40,7 +40,7 @@ import java.util.Set;
 final class Updater {
     private Updater() {}
 
-    static final String AUTO = "auto";
+    static final String AUTO = "auto", CHECK = "check";
     static final String RELEASES = "https://api.github.com/repos/LufeMC/lumatv/releases/latest";
     /** Prefs.UPDATES key: an https base address with latest.json and the APK next to it, for testing. */
     static final String BASE = "base";
@@ -88,9 +88,24 @@ final class Updater {
         }
     }
 
-    /** Settings → "Check for updates" / "Update now": runs as a job in the main process. */
+    /** Settings → "Update now": runs as a job in the main process. */
     static void requestInstall(Context c) {
         ModeJob.schedule(c, ModeJob.UPDATE, null, 0);
+    }
+
+    /** Settings → "Check for updates". */
+    static void requestCheck(Context c) {
+        ModeJob.schedule(c, ModeJob.UPDATE, CHECK, 0);
+    }
+
+    static void checkNow(Context c) {
+        synchronized (LOCK) {
+            try {
+                check(c);
+            } catch (Exception e) {
+                fail(c, e);
+            }
+        }
     }
 
     // MARK: - Jobs

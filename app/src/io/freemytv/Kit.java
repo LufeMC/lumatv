@@ -164,7 +164,7 @@ final class Kit {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path path = new Path();
         private final RectF oval = new RectF();
-        private int fill;   // the check's tick color (cut out of the disc)
+        private ColorStateList tick = ColorStateList.valueOf(0xFF000000);   // the check's tick (cut out of the disc)
 
         Glyph(Context c, int kind, ColorStateList colors) {
             super(c);
@@ -175,10 +175,10 @@ final class Kit {
             paint.setStrokeJoin(Paint.Join.ROUND);
         }
 
-        void setColors(ColorStateList colors, int tick) {
-            this.colors = colors;
-            this.fill = tick;
+        Glyph tick(ColorStateList tick) {
+            this.tick = tick;
             invalidate();
+            return this;
         }
 
         @Override protected void drawableStateChanged() {
@@ -206,7 +206,7 @@ final class Kit {
                     canvas.drawCircle(12 * u, 12 * u, 11 * u, paint);
                     paint.setStyle(Paint.Style.STROKE);
                     paint.setStrokeWidth(2.2f * u);
-                    paint.setColor(fill);
+                    paint.setColor(tick.getColorForState(getDrawableState(), tick.getDefaultColor()));
                     path.moveTo(7 * u, 12.5f * u); path.lineTo(10.2f * u, 15.7f * u); path.lineTo(17 * u, 9 * u);
                     canvas.drawPath(path, paint);
                     break;

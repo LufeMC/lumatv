@@ -37,7 +37,10 @@ public class ModeJob extends JobService {
                         HomeMode.keepAliveNow(app);
                         Updater.automatic(app);
                         break;
-                    case UPDATE: Updater.installNow(app, Updater.AUTO.equals(mode)); break;
+                    case UPDATE:
+                        if (Updater.CHECK.equals(mode)) Updater.checkNow(app);
+                        else Updater.installNow(app, Updater.AUTO.equals(mode));
+                        break;
                     case AFTER_UPDATE: Updater.afterUpdate(app); break;
                     default: break;
                 }

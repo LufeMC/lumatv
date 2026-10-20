@@ -123,13 +123,11 @@ public class EditorTests extends Instrumentation {
             SystemClock.sleep(2000);
             if (restoreOnly) {
                 try (java.io.InputStream stream = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
-                        getUiAutomation().executeShellCommand("am start -W -n io.freemytv/.SettingsActivity"))) {
+                        getUiAutomation().executeShellCommand("am start -W -n io.freemytv/.SettingsActivity --ei section 3"))) {
                     while (stream.read() != -1) {}
                 }
                 SystemClock.sleep(500);
-                for (int i = 0; i < 4; i++) key(KeyEvent.KEYCODE_DPAD_UP);
-                key(KeyEvent.KEYCODE_DPAD_DOWN);
-                key(KeyEvent.KEYCODE_DPAD_DOWN);
+                key(KeyEvent.KEYCODE_DPAD_RIGHT);    // into "Apps on Home": the "Edit apps" row
                 key(KeyEvent.KEYCODE_DPAD_CENTER);
                 waitFor("No home apps. Select Add app.");
                 for (String app : new String[]{"Netflix", "YouTube", "Prime Video", "Disney+", "HBO Max", "Apple TV", "Sun NXT", "Stremio"}) {
