@@ -76,3 +76,9 @@ JCodec uses the FreeBSD license.
 The complete license is in JCodec-LICENSE.txt.
 https://github.com/jcodec/jcodec
 https://repo.maven.apache.org/maven2/org/jcodec/jcodec/0.2.5/jcodec-0.2.5.jar
+
+ZXing core 3.5.3: Copyright ZXing authors.
+ZXing uses the Apache License, Version 2.0.
+The complete license is in Apache-2.0.txt.
+https://github.com/zxing/zxing
+https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar
