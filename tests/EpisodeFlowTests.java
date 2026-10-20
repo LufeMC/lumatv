@@ -70,6 +70,8 @@ public class EpisodeFlowTests extends Instrumentation {
         runOnMainSync(() -> { try { video().seekTo(video().getDuration() - 100); video().setPlayWhenReady(true); } catch (Exception error) { throw new RuntimeException(error); } });
     }
     private void backToEpisodes(int episode) throws Exception {
+        // The first Back hides visible controls; with the controls hidden, one Back leaves the player.
+        if (player != null) runOnMainSync(() -> { try { call(player, "hideControls"); } catch (Exception error) { throw new RuntimeException(error); } });
         key(KeyEvent.KEYCODE_BACK);
         await(() -> (Boolean) value(title, "active") && (Boolean) value(title, "episodes") && !((List<?>) value(title, "episodeList")).isEmpty(), "one Back returns directly to episodes");
         await(() -> (Integer) value(title, "focusedEpisode") == episode && title.getCurrentFocus() != null
@@ -100,7 +102,7 @@ public class EpisodeFlowTests extends Instrumentation {
             runOnMainSync(() -> { try { ((View) value(player, "nextEpisodeButton")).performClick(); } catch (Exception error) { throw new RuntimeException(error); } });
             await(() -> "tt0898266:9:23".equals(value(title, "videoId")) && (Boolean) value(title, "active"), "Next episode requests the exact following episode");
             controlled(23); endEpisode();
-            await(() -> (Boolean) value(player, "playbackEnded") && ((View) value(player, "cancelAutoplay")).getVisibility() == View.VISIBLE, "episode end displays a cancelable countdown");
+            await(() -> (Boolean) value(player, "playbackEnded") && ((View) value(player, "cancelAutoplay")).isShown() && (Boolean) value(player, "upNextShown"), "episode end shows Up next with a cancelable countdown");
             screenshot("next-episode-countdown.png");
             runOnMainSync(() -> { try { ((View) value(player, "cancelAutoplay")).performClick(); } catch (Exception error) { throw new RuntimeException(error); } });
             SystemClock.sleep(11000);

@@ -131,7 +131,7 @@ public class PlayerTests extends Instrumentation {
                 }
                 return audio == 2 && text == 2;
             }, "two audio and two subtitle tracks detected");
-            key(KeyEvent.KEYCODE_DPAD_UP); click("Audio"); screenshot("player-audio-panel.png"); click("Spanish");
+            key(KeyEvent.KEYCODE_DPAD_UP); click("Audio & subtitles"); screenshot("player-audio-panel.png"); click("Español");
             waitMain(() -> {
                 for (Tracks.Group group : player().getCurrentTracks().getGroups()) if (group.getType() == C.TRACK_TYPE_AUDIO)
                     for (int i = 0; i < group.length; i++) if (group.isTrackSelected(i) && ("spa".equals(group.getTrackFormat(i).language) || "es".equals(group.getTrackFormat(i).language))) return true;
@@ -141,17 +141,20 @@ public class PlayerTests extends Instrumentation {
             String titleLanguage = getTargetContext().getSharedPreferences("playback-settings", 0).getString("audio-title:tt0000000", "");
             check(titleLanguage.equals("es") || titleLanguage.equals("spa"), "per-title audio choice is saved");
             progress("Spanish audio selection passed.");
-            click("Subtitles"); click("English");
+            click("English, Built in");
             waitMain(() -> !player().getCurrentCues().cues.isEmpty() && player().getCurrentCues().cues.get(0).text.toString().contains("Subtitle test"), "English subtitle rendered");
             check(PlaybackSession.current.index == 1, "subtitle selection does not reject valid media during track replacement");
             screenshot("player-subtitles.png");
-            click("Subtitles"); click("Off");
-            waitMain(() -> player().getTrackSelectionParameters().disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
-                    && player().getCurrentCues().cues.isEmpty(), "subtitles off");
+            click("Off");
+            waitMain(() -> {
+                for (Tracks.Group group : player().getCurrentTracks().getGroups()) if (group.getType() == C.TRACK_TYPE_TEXT && group.isSelected()) return false;
+                return player().getCurrentCues().cues.isEmpty();
+            }, "subtitles off (only forced lines would show)");
+            key(KeyEvent.KEYCODE_BACK);
             check(PlaybackSession.current.index == 1, "subtitle changes keep the current source");
             runOnMainSync(() -> { try { player().seekTo(30000); } catch (Exception e) { throw new RuntimeException(e); } });
             waitMain(() -> player().getCurrentPosition() >= 29000 && player().isPlaying(), "seek position");
-            runOnMainSync(() -> { try { java.lang.reflect.Field field = PlayerActivity.class.getDeclaredField("pause"); field.setAccessible(true); ((android.view.View) field.get(activity)).requestFocus(); } catch (Exception e) { throw new RuntimeException(e); } });
+            runOnMainSync(() -> { try { java.lang.reflect.Field field = PlayerActivity.class.getDeclaredField("seek"); field.setAccessible(true); ((android.view.View) field.get(activity)).requestFocus(); } catch (Exception e) { throw new RuntimeException(e); } });
             key(KeyEvent.KEYCODE_DPAD_RIGHT);
             waitMain(() -> scrub().active && scrub().target >= 39000 && !player().getPlayWhenReady(), "remote opens paused preview");
             long[] before = {0}; runOnMainSync(() -> { try { before[0] = scrub().original; } catch (Exception e) { throw new RuntimeException(e); } });
@@ -169,7 +172,7 @@ public class PlayerTests extends Instrumentation {
             waitMain(() -> !scrub().active && player().isPlaying() && player().getCurrentPosition() >= 39000, "OK commits selected position");
             key(KeyEvent.KEYCODE_DPAD_LEFT); key(KeyEvent.KEYCODE_DPAD_CENTER);
             waitMain(() -> !scrub().active && player().isPlaying() && player().getCurrentPosition() < 37000, "left seeks backward");
-            click("Playback options"); click("Try another source");
+            click("More options"); click("Try another source");
             waitMain(() -> PlaybackSession.current.index == 2 && player().isPlaying() && player().getCurrentPosition() >= 26000,
                     "source change preserves position");
             waitMain(() -> {
@@ -186,12 +189,16 @@ public class PlayerTests extends Instrumentation {
                     subtitle.name = "Test add-on English"; subtitle.mime = "application/x-subrip"; values.add(subtitle);
                 } catch (Exception e) { throw new RuntimeException(e); }
             });
-            click("Subtitles"); click("Test add-on English");
-            waitMain(() -> !player().getCurrentCues().cues.isEmpty()
-                    && player().getCurrentCues().cues.get(0).text.toString().contains("Subtitle test"), "add-on subtitle file rendered");
+            key(KeyEvent.KEYCODE_DPAD_UP); click("Audio & subtitles"); click("Test add-on English");
+            waitMain(() -> {
+                Field shown = PlayerActivity.class.getDeclaredField("shownLines"); shown.setAccessible(true);
+                return ((String) shown.get(activity)).contains("Subtitle test") && player().getTrackSelectionParameters().disabledTrackTypes.contains(C.TRACK_TYPE_TEXT);
+            }, "add-on subtitle shown by the app's own scheduler");
+            check(PlaybackSession.current.index == 2, "add-on subtitles never re-prepare the player");
+            key(KeyEvent.KEYCODE_BACK);
             click("Pause"); waitMain(() -> !player().getPlayWhenReady(), "pause");
             click("Play"); waitMain(() -> player().isPlaying(), "resume");
-            click("Playback options"); click("Try another source");
+            click("More options"); click("Try another source");
             waitMain(() -> player() == null && PlaybackSession.current.index == 3, "source queue stops at end");
             screenshot("player-exhausted.png");
             runOnMainSync(() -> activity.finish()); activity = null;
@@ -203,7 +210,7 @@ public class PlayerTests extends Instrumentation {
             SystemClock.sleep(5500);
             key(KeyEvent.KEYCODE_DPAD_UP);
             screenshot("player-https.png");
-            runOnMainSync(() -> { try { java.lang.reflect.Field field = PlayerActivity.class.getDeclaredField("pause"); field.setAccessible(true); ((android.view.View) field.get(activity)).requestFocus(); } catch (Exception e) { throw new RuntimeException(e); } });
+            runOnMainSync(() -> { try { java.lang.reflect.Field field = PlayerActivity.class.getDeclaredField("seek"); field.setAccessible(true); ((android.view.View) field.get(activity)).requestFocus(); } catch (Exception e) { throw new RuntimeException(e); } });
             key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_RIGHT);
             waitMain(() -> scrub().active && !player().getPlayWhenReady(), "HTTPS seek preview opens");
             waitMain(() -> preview().available(scrub().target), "HTTPS decoded preview frame available");

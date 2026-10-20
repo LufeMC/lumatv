@@ -10,6 +10,7 @@ final class StremioAccount {
     private static boolean refreshing;
     private static long attempted;
     static synchronized JSONArray addons(Context context) throws Exception {
+        PlaybackMemory.init(context);   // source discovery starts here; the queue reads what worked per show
         JSONArray cached = AddonStore.load(context);
         long now = android.os.SystemClock.elapsedRealtime();
         if (!AddonStore.refreshDue(context) || refreshing || attempted != 0 && now - attempted < 180000) return cached;

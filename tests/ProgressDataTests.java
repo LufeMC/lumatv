@@ -37,7 +37,7 @@ public class ProgressDataTests extends Instrumentation {
             List<ContinueWatching.Entry> merged = ContinueWatching.merge(entries, Collections.singletonList(latest));
             check(merged.size() == 2 && merged.get(0).video.equals("tt123:3:1"), "one most recent episode per show");
             ContinueWatching.Entry netflix = ContinueWatching.Entry.parse(entry.json()); netflix.pkg = "com.netflix.ninja"; netflix.id = "netflix-test";
-            check(ContinueWatching.merge(entries, Collections.singletonList(netflix)).size() == 3, "retain independent service progress");
+            check(ContinueWatching.merge(entries, Collections.singletonList(netflix)).size() == 2, "one card per show across services");
             check(ContinueWatching.provider("com.netflix.ninja").equals("Netflix"), "identify Netflix");
             check(ContinueWatching.provider("com.amazon.amazonvideo.livingroom").equals("Prime Video"), "identify Prime Video");
             check(ContinueWatching.provider("untrusted.application").isEmpty(), "ignore unknown providers");
