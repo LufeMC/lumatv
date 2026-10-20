@@ -182,6 +182,15 @@ If a test session requires the TV to remain awake, use `KEYCODE_WAKEUP` at ten-m
 Do not use arrow, OK, or media keys for this purpose.
 Stop the wake schedule when testing ends.
 
+## Updater integration test
+
+`UpdateIntegrationTests` performs a real application replacement.
+Run it only with an authorized newer APK and a controlled loopback HTTPS release.
+Supply its `base` and DER certificate arguments through the test runner.
+The test process trusts that certificate without changing Android trust settings.
+A separate observer must confirm the installed version and APK hash.
+Do not include this suite in ordinary regression runs.
+
 ## Performance measurements
 
 ```bash

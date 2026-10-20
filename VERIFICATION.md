@@ -43,7 +43,7 @@ The identifiers below group the 55 approved improvements without changing their 
 | U14 | One card per show | Logic: deduplication, service priority, and movie/series separation. |
 | U15 | Quick settings on a held Settings press | Device: panel opens and closes without changing TV settings. |
 | U16 | Default and per-title languages | Device: audio and subtitle selection; English household default preserved. |
-| U17 | Signed GitHub updates | Logic: manifest, HTTPS hosts, package, version, hash, and signer checks. Full self-update installation remains pending. |
+| U17 | Signed GitHub updates | Logic: manifest, HTTPS hosts, package, version, hash, and signer checks. Device: local HTTPS manifest, downloaded APK, version, signer, and application-side installation verified. |
 | U18 | Paired-TV synchronization | Logic: PIN agreement, encryption, replay rejection, and merge. Physical two-TV pairing remains pending. |
 | U19 | Recovery and unavailable states | Device: playback recovery, offline handling, setup state, and source failures. |
 | U20 | Search add-on catalogs | Logic: supported catalogs and identifiers. Device: asynchronous integration with public search results. |
@@ -133,3 +133,15 @@ Do not describe all 55 improvements as fully verified.
 Do not publish a release based only on this integration record.
 The signing backup still needs an off-computer destination and a separately stored recovery password.
 Physical two-TV synchronization needs a separate authorized device session.
+
+## Local updater integration
+
+A temporary HTTPS server supplied a local release through an ADB loopback connection.
+The test process trusted only the supplied test certificate.
+It did not change Android certificate or network settings.
+The production downloader rejected a mismatched APK hash.
+It accepted the valid signed APK and rejected an incorrect expected version.
+The application then installed the verified APK through its existing approved ADB key.
+Installation stopped the instrumented process, as expected during an application replacement.
+A separate observer confirmed the new installed version and identical APK hash.
+The test did not publish a GitHub release.
