@@ -18,7 +18,9 @@ import java.util.Set;
 final class TitleSearch {
     static final class Title {
         int id;
-        String kind, name, year, overview, poster;
+        String kind, name, year, overview, poster, backdrop = "";
+        double popularity;
+        int votes;
         boolean series() { return "tv".equals(kind); }
         String label() {
             return name + (year.isEmpty() ? "" : " (" + year + ")") + " · "
@@ -39,10 +41,40 @@ final class TitleSearch {
                 + "&query=" + URLEncoder.encode(cleaned, "UTF-8")).optJSONArray("results"));
     }
 
+    /**
+     * Shows and movies searched separately (two lists of 20, so neither crowds out the other and no people take
+     * places), merged without repeats. One failing list still returns the other.
+     */
+    static List<Title> searchBoth(String query) throws Exception {
+        String cleaned = query == null ? "" : query.trim();
+        if (cleaned.isEmpty() || cleaned.length() > 200) throw new IllegalArgumentException("query");
+        String q = "?include_adult=false&page=1&language=" + (Ui.en ? "en-US" : "pt-BR") + "&query=" + URLEncoder.encode(cleaned, "UTF-8");
+        java.util.concurrent.Future<JSONObject> shows = BOTH.submit(() -> get("/search/tv" + q));
+        java.util.concurrent.Future<JSONObject> movies = BOTH.submit(() -> get("/search/movie" + q));
+        List<Title> result = new ArrayList<>();
+        Exception failure = null;
+        for (Object[] part : new Object[][] {{shows, "tv"}, {movies, "movie"}}) {
+            try {
+                JSONArray list = ((java.util.concurrent.Future<JSONObject>) part[0]).get(12, java.util.concurrent.TimeUnit.SECONDS).optJSONArray("results");
+                for (int i = 0; list != null && i < list.length(); i++) {
+                    JSONObject o = list.optJSONObject(i);
+                    if (o != null) o.put("media_type", part[1]);
+                }
+                result.addAll(parse(list));
+            } catch (java.util.concurrent.ExecutionException e) {
+                failure = e.getCause() instanceof Exception ? (Exception) e.getCause() : e;
+            }
+        }
+        if (result.isEmpty() && failure != null) throw failure;
+        return result;
+    }
+
+    private static final java.util.concurrent.ExecutorService BOTH = java.util.concurrent.Executors.newFixedThreadPool(2);
+
     static List<Title> parse(JSONArray data) {
         List<Title> result = new ArrayList<>();
         Set<String> seen = new HashSet<>();
-        for (int i = 0; data != null && i < data.length() && result.size() < 20; i++) {
+        for (int i = 0; data != null && i < data.length() && result.size() < 40; i++) {
             JSONObject o = data.optJSONObject(i);
             if (o == null || o.optBoolean("adult")) continue;
             String kind = o.optString("media_type");
@@ -58,6 +90,10 @@ final class TitleSearch {
             title.year = date.matches("[0-9]{4}-.*") ? date.substring(0, 4) : "";
             title.overview = o.optString("overview");
             title.poster = o.optString("poster_path", "");
+            title.backdrop = o.optString("backdrop_path", "");
+            title.popularity = o.optDouble("popularity", 0);
+            title.votes = o.optInt("vote_count", 0);
+            if (title.backdrop.equals("null")) title.backdrop = "";
             result.add(title);
         }
         return result;

@@ -15,6 +15,7 @@ import android.widget.TextView;
  * back to the TV's original one.
  */
 public class HomeActivity extends Activity {
+    static final int VOICE = 20;
     static java.lang.ref.WeakReference<HomeActivity> visible = new java.lang.ref.WeakReference<>(null);
     private HomeView home;
     long fontsMs, viewMs;
@@ -41,6 +42,7 @@ public class HomeActivity extends Activity {
         home = new HomeView(this); viewMs = android.os.SystemClock.elapsedRealtime() - phase;
         setContentView(home);
         getWindow().setBackgroundDrawable(null);
+        if (getIntent().getBooleanExtra("play_opening", false)) home.playOpening();
     }
 
     @Override protected void onResume() {
@@ -58,6 +60,14 @@ public class HomeActivity extends Activity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         if (home != null) home.reset(true);
+        if (home != null && intent.getBooleanExtra("play_opening", false)) home.playOpening();
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != VOICE || result != RESULT_OK || data == null || home == null) return;
+        java.util.ArrayList<String> heard = data.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS);
+        if (heard != null && !heard.isEmpty()) home.voiceResult(heard.get(0));
     }
 
     @Override protected void onDestroy() {

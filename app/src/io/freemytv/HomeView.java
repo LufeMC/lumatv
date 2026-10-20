@@ -8,16 +8,22 @@ import android.graphics.Bitmap;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
+import android.graphics.RadialGradient;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.media.tv.TvInputManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.text.Layout;
-import android.text.StaticLayout;
+import android.speech.RecognizerIntent;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.view.Choreographer;
@@ -30,246 +36,250 @@ import org.json.JSONObject;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The home screen, styled after the Apple TV app with the macOS 27 glass:
- *  - at the top left, the "For You" title and the tabs (Explore, Movies, Shows); at the top right, icon-only glass
- *    buttons (Live TV, HDMI Inputs, Settings), with the focused one's name below it, and the small crypto quotes
- *    (logo + price) at the right end of the tab row;
- *  - three cards with the titles recommended for right now in the selected tab (Recs, from TMDB); the background is
- *    the first card's photo, heavily blurred and almost white (Backdrop); without one, a light gradient;
- *  - at the bottom, the glass shelf with the apps (icons in each brand's color, like the tvOS Dock; the focused one
- *    grows);
- *  - ↓ on the shelf: everything moves up and the bottom drawer appears (inputs, shortcuts, weather for the next hours
- *    and quotes with the 24 h change); the background lightens (darkens at night). ↑ or Back closes it;
- *  - from sunset to sunrise, a night look: dark background, smoked glass and white text.
- * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
- * redraws what changed.
+ * The LumaTV home screen, search first (the HomeHybrid, HomeUpNext and HomeSearch boards):
+ *  - at rest: the landscape for the time of day, the clock, three icon buttons, the search bar (the first focus), a
+ *    Resume chip and a quiet row of white app logos;
+ *  - Down: content takes over. A cinema hero for the focused card (its backdrop follows focus) and one row: Continue
+ *    Watching (with Up next cards), Watchlist and what's trending on your apps;
+ *  - OK on the search bar (or just typing): a one-line keyboard and results that say where each title plays;
+ *  - long-press OK: a card's actions, or editing the app row in place; All apps is a plain text grid.
+ * Measurements are in a 1920 × 1080 space (k = width / 1920). Nothing here uses live blur: the frosted bar reads a
+ * pre-blurred copy of the landscape, so the TV's GPU only draws pictures and text.
  */
-final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener {
-    // tvOS grid (Human Interface Guidelines): content inside the safe area, 80 px from the sides and 60 from top and
-    // bottom; 40 px between items; 7 columns of 217 px (the apps). The shelf glass extends 36 px past the tiles (the
-    // same padding on all four sides) and the tile corners are concentric with it (glass radius = radius + padding).
-    private static final float MARGIN = 80, CONTENT_R = 1840;
-    // Hero, anchored at the bottom (a two-line title grows upward).
-    private static final float HERO_TITLE_W = 900;
-    // Shelf: tiles with corners concentric with the glass (glass radius = tile radius + padding).
-    // Shelf like the tvOS 27 Dock: 5:3 icons (210 × 126) in each brand's color, 48 apart, and the glass bar hugging
-    // them with 40 of padding (the focused icon grows 20% without touching its edge).
-    private static final float SHELF_PAD = 40, TILE_GAP = 48;
-    private static final float TILE_RADIUS = 22, TILE_MAX_W = 270;
-    // Tile focus (Apple TV style): it grows from the center and its shadow drops (it "rises" toward the viewer).
-    private static final float FOCUS_GROW = 0.2f;
-    // Corner capsule.
-    // Corner capsule: the height and top offset of the tvOS tab bar (68 and 46).
-    private static final float CAPSULE_TOP = 46, CAPSULE_H = 68, BUTTON = 56;
-    // Bottom drawer (measured with it open; everything moves up by SHIFT).
-    private static final float SHIFT = 560, ROW_TITLE = 518, ROW_TOP = 540, ROW_H = 126, CARDS_TOP = 708, CARDS_H = 300;
-    // "All Apps" sheet.
-    private static final int COLUMNS = 5, VISIBLE_ROWS = 3;
-    private static final float GRID_W = 300, GRID_H = 169, GRID_GAP = 40, GRID_ROW = 239, GRID_TOP = 196, GRID_RADIUS = 22;
-    private static final int SMOKE = 0xFF111113, INK = 0xFF1C1C1E, WHITE = 0xFFF5F5F7;
-    private static final int UP_COLOR = 0xFF30D158, DOWN_COLOR = 0xFFFF453A;
-    private static final long TOAST_MS = 6000, FADE_MS = 800;
-    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7;
-    private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
-    private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
-    // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
-    // The tab bar is a 68 px capsule; the cards sit on the 5-column grid (the wide one spans 3).
-    private static final float L_TITLE_BASE = 130, L_TABBAR_TOP = 158, L_TABBAR_H = 68, L_CARDS_TOP = 262, L_CARD_H = 442;
-    private static final float L_TALL_W = 320, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 103;
-    private static final float L_PLATTER_TOP = 814, L_TILE_H = 126;
-    private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
-    private static final String[] TABS = {"Explorar", "Filmes", "Séries"};
-    private static final String[] TABS_EN = {"Explore", "Movies", "Shows"};
-    private static final String[] TAB_KIND = {null, "movie", "tv"};
-    private static final int Z_TOP = 4, Z_CARDS = 5;
+final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener, HomeArt.Listener {
+    // Layout (design px)
+    private static final float SAFE = 96, RIGHT = 1824;
+    private static final float CHIP_TOP = 534, CHIP_H = 72;
+    private static final float LOGO_CY = 984, LOGO_GAP = 76;
+    private static final float HERO_TOP = 222;
+    private static final float ROW_TOP = 618, CARDS_TOP = 665, CARD_W = 320, CARD_H = 180, CARD_GAP = 28, SECTION_GAP = 44;
+    private static final float ICON = 56, ICON_GAP = 8, ICONS_TOP = 58;
+    private static final float KEYS_TOP = 168, KEYS_H = 56;
+    private static final float RESULTS_TOP = 290, RESULT_W = 400, RESULT_H = 225, RESULT_GAP = 28;
+    private static final RectF PILL_REST = new RectF(480, 404, 1440, 500), PILL_CONTENT = new RectF(760, 56, 1160, 116),
+            PILL_SEARCH = new RectF(480, 52, 1440, 140);
+    // States and focus
+    private static final int REST = 0, CONTENT = 1, SEARCH = 2;
+    static final int Z_ICONS = 0, Z_PILL = 1, Z_CHIP = 2, Z_LOGOS = 3, Z_HERO = 4, Z_ROW = 5, Z_KEYS = 6, Z_RESULTS = 7,
+            Z_RECENT = 9, Z_SETUP = 10;
+    private static final int OV_NONE = 0, OV_MENU = 1, OV_ALL = 2;
+    private static final int CW = 0, PICK = 1;
+    private static final int ROW_MAX = 24, ROW_RESULTS = 8;
+    private static final long TOAST_MS = 5000, FADE_MS = 500, HERO_DELAY = 250;
+    private static final ExecutorService WORK = Executors.newFixedThreadPool(2), WHERE = Executors.newFixedThreadPool(4);
+    private static final PorterDuffColorFilter INK_TINT = new PorterDuffColorFilter(Look.INK, PorterDuff.Mode.SRC_IN),
+            DAY_TINT = new PorterDuffColorFilter(Look.DAY_INK, PorterDuff.Mode.SRC_IN),
+            ON_INK_TINT = new PorterDuffColorFilter(Look.ON_INK, PorterDuff.Mode.SRC_IN);
 
-    private final Activity activity;
-    private final ContinueRow continueRow;
-    private static final int Z_CONTINUE = 6;
-    private final Scene scene = new Scene();
-    private final HomeData data;
-    private final Recs recs;
-    private final Click click;
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final SharedPreferences ui;
-    private final TvInputManager tvInputs;
-    private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer;
-    private int zone = Z_TOP;
+    // Icons (24-unit line drawings, from the boards)
+    private static final Path SEARCH_ICON = SvgPath.parse("M4 11a7 7 0 1 0 14 0a7 7 0 1 0 -14 0 M20 20l-3.5-3.5");
+    private static final Path MIC_ICON = SvgPath.parse("M9 6a3 3 0 0 1 6 0v5a3 3 0 0 1 -6 0z M5 11a7 7 0 0 0 14 0M12 18v3");
+    private static final Path INPUTS_ICON = SvgPath.parse("M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2H5a2 2 0 0 1 -2 -2V7a2 2 0 0 1 2 -2z M8 21h8M12 17v4");
+    private static final Path APPS_ICON = SvgPath.parse("M5.5 4h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5h-3a1.5 1.5 0 0 1 -1.5 -1.5v-3a1.5 1.5 0 0 1 1.5 -1.5z"
+            + "M15.5 4h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5h-3a1.5 1.5 0 0 1 -1.5 -1.5v-3a1.5 1.5 0 0 1 1.5 -1.5z"
+            + "M5.5 14h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5h-3a1.5 1.5 0 0 1 -1.5 -1.5v-3a1.5 1.5 0 0 1 1.5 -1.5z"
+            + "M15.5 14h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1 -1.5 1.5h-3a1.5 1.5 0 0 1 -1.5 -1.5v-3a1.5 1.5 0 0 1 1.5 -1.5z");
+    private static final Path SETTINGS_ICON = SvgPath.parse("M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0 "
+            + "M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1"
+            + "a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3"
+            + "a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9"
+            + "a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1"
+            + "a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z");
+    private static final Path PLAY_ICON = SvgPath.parse("M7 4.5v15l13-7.5z");
+    private static final Path SHOW_ICON = SvgPath.parse("M4 6h16v12H4z M4 10h16");
+    private static final Path CHECK_ICON = SvgPath.parse("M5 12.5l4.5 4.5L19 7.5");
+    private static final Path CLOSE_ICON = SvgPath.parse("M6 6l12 12M18 6L6 18");
+    private static final Path PLUS_ICON = SvgPath.parse("M12 5v14M5 12h14");
+    private static final Path OFFLINE_ICON = SvgPath.parse("M3 3l18 18 M8.5 16.4a5 5 0 0 1 7 0 M5 12.9a10 10 0 0 1 5.2-2.8 M19 12.9a10 10 0 0 0 -2.6-1.9 "
+            + "M2 8.8a15 15 0 0 1 4.2-2.6 M22 8.8a15 15 0 0 0 -11.4-3.7 M12 20h.01");
 
-    // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
-    private static final long NIGHT_MS = 2000;
-    private boolean nightTarget;
-    private float night, nightFrom;     // 0 = day, 1 = night
-    private long nightAt;
-    private final int[] glassNight = new int[Backdrop.GW * Backdrop.GH], frostNight = new int[Backdrop.FW * Backdrop.FH];
-    private final int[] neutralGlassPx = new int[Backdrop.GW * Backdrop.GH], neutralFrostPx = new int[Backdrop.FW * Backdrop.FH];
-    private boolean nightPair;          // the glass holds both photos (day and night), blended by `night`
-    private Shader nightGradient;
-
-    // At the top: tabs (0 to 2) and icon-only buttons (3 to 5); the three cards
-    private int tab, topIndex = 6, cardIndex;
-    private List<Recs.Pick> cards = new ArrayList<>();
-    private final Spring[] topFocus = new Spring[7];
-    private final RectF[] topRects = new RectF[7];
-    private final Spring[] cardFocus = new Spring[3];
-    private final RectF[] cardRects = new RectF[3];
-    private final List<HomeApps.Item> lightButtons = new ArrayList<>();
-    private Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip;
-    private Shader lightGradient;
-
-    // Shelf
-    private List<HomeApps.Item> shelf = new ArrayList<>();
-    private Spring[] tileFocus = new Spring[0];
-    private RectF[] tileRects = new RectF[0];
-    private final Map<String, Bitmap> crispLogos = new HashMap<>();   // logos already sized for the focused tile
-    /** Each app's tile like its Apple TV icon: brand colors (top, bottom) and logo (0 = as is, 1 = white, 2 = dark). */
-    private static final Map<String, int[]> TILE_STYLE = new HashMap<>();
-    static {
-        TILE_STYLE.put("netflix", new int[] {0xFF0A0A0A, 0xFF000000, 0});
-        TILE_STYLE.put("youtube", new int[] {0xFF1C1C1E, 0xFF09090A, 0});
-        TILE_STYLE.put("globoplay", new int[] {0xFFFF8A1F, 0xFFFF2D5A, 1});
-        TILE_STYLE.put("prime", new int[] {0xFF2AA8FF, 0xFF0A68D4, 1});
-        TILE_STYLE.put("disney", new int[] {0xFF173584, 0xFF08143F, 0});
-        TILE_STYLE.put("max", new int[] {0xFF5C30E8, 0xFF221684, 0});
-        TILE_STYLE.put("appletv", new int[] {0xFF1C1C1E, 0xFF000000, 0});
+    /** One card of the content row. */
+    private static final class Card {
+        int kind;
+        String key = "", section = "", title = "", sub = "", kicker = "", meta = "", left = "", primary = "", secondary = "";
+        float progress = -1;
+        boolean sectionStart;
+        float x;                        // left edge before scrolling (design px)
+        String titleFit, subFit;
+        ContinueWatching.Entry entry;
+        Recs.Pick pick;
+        HomeArt.Source source;
     }
-    private final android.graphics.PorterDuffColorFilter whiteLogo =
-            new android.graphics.PorterDuffColorFilter(0xFFFFFFFF, android.graphics.PorterDuff.Mode.SRC_IN);
-    private final RectF platterRect = new RectF();
-    private int shelfIndex;
 
-    // Corner capsule
-    private List<HomeApps.Item> statusItems = new ArrayList<>();
-    private Spring[] statusFocus = new Spring[0];
-    private RectF[] statusRects = new RectF[0];
-    private final RectF capsuleRect = new RectF();
-    private float capsuleInfoW;
-    private int statusIndex;
+    /** One search result: a title and where it plays. */
+    private static final class Result {
+        TitleSearch.Title title;
+        String key = "", where = "", pkg = "";
+        String titleFit, whereFit;
+        HomeArt.Source source;
+        double score;
+        final Spring focus = new Spring(0.28f, 0.86f, 0);
+    }
 
-    // Hero and background
-    private List<Recs.Pick> picks = new ArrayList<>();
-    private int pickIndex, heroSlide = 1;
-    private Hero hero, heroFrom;
-    private long heroFadeAt, bgFadeAt;
-    private final Spring heroFocus = new Spring(0.28f, 0.85f, 0);
-    private final RectF heroButton = new RectF();
-    private Backdrop bgFrom, bgTo;     // null = gradient (no photo)
-    private final int[] frostMix = new int[Backdrop.FW * Backdrop.FH];
+    /** A row of search results: shows, movies or apps. */
+    private static final class Section {
+        final String label;
+        final boolean apps;
+        final List<Result> titles = new ArrayList<>();
+        final List<HomeApps.Item> items = new ArrayList<>();
+        float top;      // design px, before scrolling
+        final Spring scroll = new Spring(0.42f, 1f, 0);
 
-    // Bottom drawer
-    private List<HomeApps.Item> drawerItems = new ArrayList<>();
-    private int drawerInputs;          // how many leading items are inputs (the rest are shortcuts)
-    private Spring[] drawerFocus = new Spring[0];
-    private RectF[] drawerRects = new RectF[0];
-    private final RectF weatherCard = new RectF(), quotesCard = new RectF();
-    private final Spring drawer = new Spring(0.46f, 0.92f, 0);
-    private boolean drawerOpen;
-    private int drawerIndex;
+        Section(String label, boolean apps) {
+            this.label = label;
+            this.apps = apps;
+        }
 
-    // "All Apps" sheet
-    private List<HomeApps.Item> others = new ArrayList<>();
-    private Spring[] gridFocus = new Spring[0];
-    private String[] gridLabels;
-    private final Spring sheet = new Spring(0.38f, 0.9f, 0);
-    private final Spring scroll = new Spring(0.34f, 1f, 0);
-    private final RectF focusedCell = new RectF();
-    private boolean sheetOpen;
-    private int gridIndex;
+        int size() { return apps ? items.size() : titles.size(); }
 
-    // Toasts
-    private final ArrayDeque<String> toasts = new ArrayDeque<>();
-    private StaticLayout toast;
-    private long toastAt;
+        float height() { return apps ? 200 : 380; }
+    }
 
-    // Frames
-    private boolean running, tilesDirty, statusDirty, heroDirty, drawerDirty, gridDirty, motionDirty = true;
-    private boolean drawerWasMoving;
-    private long lastNanos, resumedAt, lastStep;
-    private boolean frameScheduled;
-    long frameCount;
-    private final Runnable idleFrame = () -> wakeFrames();
-    private int w, h;
-    private float k = 1;
-    private String clockText = "";
-    private long clockMinute = -1;
-    private boolean okDown, backDown;
-    private final Runnable editApps = () -> openAppEditor();
+    /** One line of a menu (a card's actions, the inputs). */
+    private static final class MenuItem {
+        final String label;
+        final Path icon;
+        final Runnable action;
+        final boolean dim;
 
-    private void openAppEditor() {
-        if (okDown && running && !sheetOpen && zone == Z_SHELF && !shelf.isEmpty()) {
-            okDown = false;
-            handler.removeCallbacks(editApps);
-            activity.startActivity(new Intent(activity, AppsActivity.class).putExtra("package", shelf.get(shelfIndex).pkg));
+        MenuItem(String label, Path icon, boolean dim, Runnable action) {
+            this.label = label;
+            this.icon = icon;
+            this.dim = dim;
+            this.action = action;
         }
     }
 
-    private Paint labelPaint, metaPaint, clockPaint, buttonPaint, capsuleText, tipPaint, quotePaint, staleQuote;
-    private Paint rowTitle, drawerLabel, cardTitle, cardText, cardDim, cardDimRight, bigTemp, hourPaint, hourTemp;
-    private Paint pricePaint, changePaint, sheetTitle;
-    private TextPaint titlePaint, gridLabel, toastPaint;
-    private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-    private final Paint imagePaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
-    private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint shadowSoft = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint shadowDeep = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint halo = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint border = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint sheen = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint veil = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint tileFill = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Path clip = new Path();
-    private final RectF tmp = new RectF(), cell = new RectF(), screen = new RectF();
-
-    /** What the hero shows: a recommendation or, without any, the date, the time and the weather. */
-    private static final class Hero {
-        String label = "", title = "", meta = "";
-        boolean clock, button;
-        int dots, dot;
-        StaticLayout titleLayout;
-
-        boolean sameText(Hero o) {
-            return o != null && clock == o.clock && label.equals(o.label) && title.equals(o.title) && meta.equals(o.meta);
-        }
-    }
-
-    /** One layer of the screen. It draws in full-screen coordinates: the glass needs each pixel's real position. */
+    /** A layer of the screen; each redraws only when its part changes. */
     private final class Layer extends View {
         private final int kind;
 
         Layer(Context c, int kind) {
             super(c);
             this.kind = kind;
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
 
         @Override protected void onDraw(Canvas c) {
-            if (labelPaint == null) return;
-            c.translate(-getLeft(), -getTop());
-            // The layer may be shifted (bottom drawer): the glass reads the background from where it really is. The
-            // drawer and the top buttons are always drawn as if resting in place (they are only visible there and are
-            // not redrawn while they move).
-            scene.setOffset(0, kind == DRAWER || kind == STATUS ? 0 : getTranslationY());
-            switch (kind) {
-                case SKY: drawSky(c); break;
-                case HERO: drawLightTop(c); break;
-                case STATUS: drawLightButtons(c); break;
-                case PLATTER: drawPlatter(c); break;
-                case TILES: drawTiles(c); break;
-                case DRAWER: drawDrawer(c); break;
-                case SHEET: drawSheet(c); break;
-                default: drawToast(c); break;
-            }
-            scene.setOffset(0, 0);
+            if (clockP == null) return;
+            if (kind == 0) drawGround(c);
+            else if (kind == 1) drawChrome(c);
+            else drawOverlay(c);
         }
     }
+
+    private final Activity activity;
+    private final HomeData data;
+    private final Recs recs;
+    private final HomeArt art;
+    private final Click click;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final SharedPreferences ui;
+    private final TvInputManager tvInputs;
+    private final ConnectivityManager connectivity;
+    private final Layer ground, chrome, overlay;
+    private final KeyRow keys;
+    private final boolean voice;
+    private Opening opening;
+
+    // State and focus
+    private int mode = REST;
+    int zone = Z_PILL;
+    private int iconIndex, heroIndex, rowIndex, logoIndex, resultIndex, recentIndex;
+    private int overlayKind = OV_NONE;
+    private final Spring contentT = new Spring(0.5f, 1f, 0), searchT = new Spring(0.45f, 1f, 0), overlayT = new Spring(0.36f, 1f, 0);
+    private final Spring rowScroll = new Spring(0.42f, 1f, 0), allScroll = new Spring(0.4f, 1f, 0);
+    private Spring[] rowFocus = new Spring[0];
+    private boolean editing, okDown, backDown, online = true;
+
+    // Content
+    final List<Card> row = new ArrayList<>();
+    private List<ContinueWatching.Entry> entries = new ArrayList<>();
+    List<HomeApps.Item> shelf = new ArrayList<>();
+    private List<HomeApps.Item> others = new ArrayList<>(), inputs = new ArrayList<>();
+    private float[] logoW = new float[0], logoH = new float[0], logoX = new float[0];
+    private final java.util.Map<String, Bitmap> whiteLogos = new java.util.HashMap<>();
+
+    // Search
+    private String query = "";
+    private final List<Result> results = new ArrayList<>();
+    private final List<HomeApps.Item> appResults = new ArrayList<>();
+    private final List<String> recent = new ArrayList<>();
+    private final List<Section> sections = new ArrayList<>();
+    private int sectionIndex;
+    private final Spring searchScroll = new Spring(0.42f, 1f, 0);
+    private int searchToken;
+    private boolean searching;
+    private String searchError = "";
+    private final Runnable runSearch = this::search;
+
+    // Overlays
+    private final List<MenuItem> menu = new ArrayList<>();
+    private int menuIndex;
+    private Card menuCard;
+    private List<HomeApps.Item> allApps = new ArrayList<>();
+    private int allIndex;
+    private final ArrayDeque<String> toasts = new ArrayDeque<>();
+    private String toast;
+    private long toastAt;
+
+    // Pictures
+    private Landscape land, landFrom;
+    private long landFadeAt;
+    private HomeArt.Hero heroFrom, heroTo;
+    private String heroKey = "";
+    private long heroFadeAt;
+    private final Runnable heroLoad = this::loadHero;
+
+    // Frames
+    private boolean running, frameScheduled;
+    private long lastNanos;
+    long frameCount;
+    private final Runnable idleFrame = this::wakeFrames;
+    private float k = 1;
+    private int w, h;
+    private String clockText = "", weatherText = "";
+    private long clockMinute = -1;
+
+    private Paint clockP, weatherP, pillP, pillSmallP, queryP, chipP, chipStrongP, kickerP, metaP, buttonP, button2P, sectionP;
+    private Paint cardTitleP, cardSubP, resultTitleP, whereP, recentP, logoNameP, hintP, kbdP, allTitleP, allItemP, allItemOnP;
+    private Paint editP, menuItemP, menuItemOnP, bigTitleP, bigSubP, setupTitleP, setupBodyP, setupButtonP, offlineP, offlineLineP;
+    private Paint toastP, labelP;
+    private TextPaint heroTitleP;
+    private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint image = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
+    private final Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG), scrim = new Paint(Paint.DITHER_FLAG);
+    private Shader topScrim, bottomScrim, dayTop, dayBottom, heroLeft, heroBottom, heroTop, offlineGlow;
+    private final RectF r = new RectF(), r2 = new RectF(), screen = new RectF();
+    private final Path clip = new Path();
+    private final Matrix matrix = new Matrix();
+    private final android.graphics.Rect src = new android.graphics.Rect();
+    private String heroTitleFit = "";
+    private Card heroTitleFor;
+
+    private final Runnable tick = new Runnable() {
+        @Override public void run() {
+            if (!running) return;
+            data.refreshIfStale();
+            recs.refreshIfStale();
+            refreshRow();
+            checkNotices();
+            checkLandscape(true);
+            handler.postDelayed(this, 15_000);
+        }
+    };
+
+    private final Runnable longPress = () -> {
+        if (!okDown || !running) return;
+        okDown = false;
+        onLongPress();
+    };
 
     private final TvInputManager.TvInputCallback inputCallback = new TvInputManager.TvInputCallback() {
         @Override public void onInputStateChanged(String inputId, int state) { reload(); }
@@ -277,18 +287,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override public void onInputRemoved(String inputId) { reload(); }
     };
 
-    private final Runnable tick = new Runnable() {
-        @Override public void run() {
-            if (!running) return;
-            data.refreshIfStale();
-            recs.refreshIfStale();
-            refreshContinue();
-            checkNotices();
-            updatePalette();
-            checkNight(true);
-            updatePicks();      // three new ones every hour
-            handler.postDelayed(this, 15_000);
-        }
+    private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
+        @Override public void onAvailable(Network n) { handler.post(() -> setOnline(true)); }
+        @Override public void onLost(Network n) { handler.post(() -> setOnline(hasNetwork())); }
     };
 
     HomeView(Activity a) {
@@ -296,68 +297,70 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         activity = a;
         data = HomeData.get(a);
         recs = Recs.get(a);
+        art = new HomeArt(a, this);
         click = new Click(a);
-        ui = a.getSharedPreferences("home-ui", Context.MODE_PRIVATE);
+        ui = Prefs.get(a, Prefs.HOME_UI);
         tvInputs = (TvInputManager) a.getSystemService(Context.TV_INPUT_SERVICE);
+        connectivity = (ConnectivityManager) a.getSystemService(Context.CONNECTIVITY_SERVICE);
+        voice = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).resolveActivity(a.getPackageManager()) != null;
         setFocusable(true);
-        sky = new Layer(a, SKY);
-        heroLayer = new Layer(a, HERO);
-        status = new Layer(a, STATUS);
-        platter = new Layer(a, PLATTER);
-        tiles = new Layer(a, TILES);
-        drawerLayer = new Layer(a, DRAWER);
-        sheetLayer = new Layer(a, SHEET);
-        toastLayer = new Layer(a, TOAST);
-        // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
-        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, sheetLayer}) v.setLayerType(LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer}) addView(v);
-        drawerLayer.setVisibility(INVISIBLE);
-        for (int i = 0; i < topFocus.length; i++) {
-            topFocus[i] = new Spring(0.26f, 0.85f, 0);
-            topRects[i] = new RectF();
-        }
-        for (int i = 0; i < 3; i++) {
-            cardFocus[i] = new Spring(0.32f, 0.78f, 0);
-            cardRects[i] = new RectF();
-        }
-        continueRow = new ContinueRow(a, up -> {
-            zone = up ? Z_TOP : Z_SHELF; if (up) topIndex = 6;
-            requestFocus(); retarget(false);
+        setClipChildren(false);
+        ground = new Layer(a, 0);
+        chrome = new Layer(a, 1);
+        overlay = new Layer(a, 2);
+        keys = new KeyRow(a, voice, new KeyRow.Listener() {
+            @Override public void type(String text) { setQuery(query + text); }
+            @Override public void delete() { if (!query.isEmpty()) setQuery(query.substring(0, query.length() - 1)); }
+            @Override public void voice() { startVoice(); }
         });
-        addView(continueRow); continueRow.setVisibility(INVISIBLE);
-        makeLightButtons();
-        recs.setLight(true);
-        checkNight(false);
-        sheetLayer.setVisibility(INVISIBLE);
-        scene.setMotion(0.6f, 0f);
-        updatePalette();
-        // Package queries and image decoding run in reload() after the first frame.
+        keys.setFocusable(false);
+        addView(ground);
+        addView(chrome);
+        addView(keys);
+        addView(overlay);
+        keys.setAlpha(0);
+        keys.setVisibility(INVISIBLE);
+        overlay.setVisibility(INVISIBLE);
+        loadRecent();
+        entries = ContinueWatching.cached(a);
+        buildRow();
+        online = hasNetwork();
+        if (Opening.due(a)) playOpening();
+    }
+
+    /** Flora's opening, over the home screen (also from Settings → About). */
+    void playOpening() {
+        if (opening != null) return;
+        opening = new Opening(getContext(), () -> {
+            removeView(opening);
+            opening = null;
+        });
+        addView(opening);
     }
 
     // MARK: - Lifecycle (called by HomeActivity)
 
     void resume() {
         if (running) return;
-        running = true; continueRow.resume();
-        for (View layer : new View[]{heroLayer, status, platter, tiles, drawerLayer, sheetLayer}) layer.setLayerType(LAYER_TYPE_HARDWARE, null);
-        checkNight(false);
-        resumedAt = SystemClock.uptimeMillis();
+        running = true;
         lastNanos = 0;
-        lastStep = 0;
         data.addListener(this);
         recs.addListener(this);
         data.refreshIfStale();
         recs.refreshIfStale();
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
+        try {
+            connectivity.registerDefaultNetworkCallback(networkCallback);
+        } catch (RuntimeException ignored) {
+        }
+        setOnline(hasNetwork());
         handler.postDelayed(tick, 15_000);
+        checkLandscape(false);
         checkNotices();
         reload();
-        refreshContinue();
-        updatePalette();
-        updatePicks();
-        if (sheetOpen) closeSheet();
-        sheet.snap(sheet.target);
-        motionDirty = true;
+        refreshRow();
+        loadRecent();
+        updateClock();
         invalidateAll();
         wakeFrames();
     }
@@ -366,128 +369,283 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (!running) return;
         running = false;
         okDown = false;
-        handler.removeCallbacks(editApps);
-        Choreographer.getInstance().removeFrameCallback(this);
-        handler.removeCallbacks(idleFrame); frameScheduled = false;
+        handler.removeCallbacks(longPress);
         handler.removeCallbacks(tick);
+        handler.removeCallbacks(idleFrame);
+        handler.removeCallbacks(heroLoad);
+        Choreographer.getInstance().removeFrameCallback(this);
+        frameScheduled = false;
         data.removeListener(this);
         recs.removeListener(this);
-        recs.trimArtwork(); continueRow.pause(); TitleArtwork.trimMemory();
-        for (View layer : new View[]{heroLayer, status, platter, tiles, drawerLayer, sheetLayer}) layer.setLayerType(LAYER_TYPE_NONE, null);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
+        try {
+            connectivity.unregisterNetworkCallback(networkCallback);
+        } catch (RuntimeException ignored) {
+        }
+        if (editing) finishEditing();
+        art.trim();
+        heroFrom = heroTo = null;
+        heroKey = "";
+        TitleArtwork.trimMemory();
     }
 
     void destroy() {
         pause();
         click.release();
-        continueRow.release();
     }
 
-    /** Starting state (Home pressed while the home screen is showing): first app focused, drawer and sheet closed. */
+    /** Home pressed on the home screen: back to rest, search focused. */
     void reset(boolean animated) {
-        zone = Z_TOP;
-        topIndex = 6;
-        shelfIndex = 0;
-        sheetOpen = false;
-        drawerOpen = false;
-        if (animated) {
-            sheet.target = 0;
-            drawer.target = 0;
-        } else {
-            sheet.snap(0);
-            drawer.snap(0);
+        if (opening != null) opening.skip();
+        closeOverlay();
+        if (editing) finishEditing();
+        if (mode == SEARCH) setQuery("");
+        setMode(REST);
+        zone = Z_PILL;
+        rowIndex = 0;
+        rowScroll.snap(0);
+        if (!animated) {
+            contentT.snap(0);
+            searchT.snap(0);
         }
-        if (pickIndex != 0 && !picks.isEmpty()) {
-            pickIndex = 0;
-            updatePicks();
-        }
-        if (tab != 0) selectTab(0);
-        retarget(!animated);
-        motionDirty = true;
+        changed();
     }
 
-    /** The three corner buttons, with their names in the current language. */
-    private void makeLightButtons() {
-        lightButtons.clear();
-        lightButtons.add(HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("TV aberta", "Live TV"), "live_tv"));
-        lightButtons.add(HomeApps.action(HomeApps.INPUTS, "inputs", Ui.tr("Entradas HDMI", "HDMI Inputs"), "hdmi"));
-        lightButtons.add(HomeApps.action(HomeApps.SETTINGS, "settings", Ui.tr("Configurações", "Settings"), "settings"));
-        lightButtons.add(HomeApps.action(HomeApps.SEARCH, "search", Ui.tr("Buscar", "Search"), "search"));
-    }
-
-    private static String[] tabs() {
-        return Ui.en ? TABS_EN : TABS;
-    }
+    // MARK: - Data
 
     @Override public void onData() {
-        wakeFrames();
-        updatePalette();
-        checkNight(true);
-        layoutStatus();
-        heroDirty = statusDirty = drawerDirty = true;
-        platter.invalidate();
+        updateWeather();
+        checkLandscape(true);
+        changed();
     }
 
     @Override public void onRecs() {
-        wakeFrames();
-        updatePicks();
+        buildRow();
+        changed();
     }
 
-    private void invalidateAll() {
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer}) v.invalidate();
+    @Override public void onArt() {
+        if (!running) return;
+        String key = heroKey;
+        if (!key.isEmpty()) loadHero();
+        chrome.invalidate();
+        overlay.invalidate();
     }
 
-    private boolean hasContinue() { return tab == 0 && continueRow.available(); }
-    private void refreshContinue() {
-        continueRow.refresh(() -> {
-            if (!running) return;
-            if (hasContinue() && zone == Z_CARDS) { zone = Z_CONTINUE; continueRow.focus(); }
-            heroDirty = true; updateMotion(); retarget(false);
+    /** Apps, inputs and the All apps list (in the background, so returning home isn't delayed). */
+    private void reload() {
+        final Context c = getContext().getApplicationContext();
+        WORK.execute(() -> {
+            final List<HomeApps.Item> s = HomeApps.shelf(c, true);
+            final List<HomeApps.Item> in = HomeApps.allInputs(c);
+            final List<HomeApps.Item> o = HomeApps.others(c);
+            handler.post(() -> {
+                if (!editing) setShelf(s);
+                inputs = in;
+                others = o;
+                if (overlayKind != OV_ALL) allApps = allAppsList();
+                changed();
+            });
         });
     }
-    private void enterContinue() { zone = Z_CONTINUE; continueRow.setVisibility(VISIBLE); continueRow.focus(); }
 
-    // MARK: - Size and layers
+    private void refreshRow() {
+        final Context c = getContext().getApplicationContext();
+        WORK.execute(() -> {
+            final List<ContinueWatching.Entry> loaded = ContinueWatching.refresh(c);
+            handler.post(() -> {
+                if (!running) return;
+                entries = loaded;
+                buildRow();
+                changed();
+            });
+        });
+    }
+
+    private void setShelf(List<HomeApps.Item> list) {
+        String focused = logoIndex < shelf.size() ? shelf.get(logoIndex).key : null;
+        shelf = list;
+        logoIndex = 0;
+        for (int i = 0; i < list.size(); i++) if (list.get(i).key.equals(focused)) logoIndex = i;
+        whiteLogos.clear();
+        layoutLogos();
+        if (zone == Z_LOGOS && shelf.isEmpty()) zone = Z_PILL;
+    }
+
+    /** Continue Watching, then what's trending on the TV's apps; the focused card stays focused. */
+    private void buildRow() {
+        String focused = rowIndex < row.size() ? row.get(rowIndex).key : null;
+        row.clear();
+        String cw = Ui.tr("Continuar assistindo", "Continue Watching");
+        for (ContinueWatching.Entry e : entries) {
+            if (row.size() >= 12) break;
+            row.add(cwCard(e, cw));
+        }
+        String trending = Ui.tr("Em alta nos seus apps", "Trending on your apps");
+        if (online) for (Recs.Pick p : recs.trending(ROW_MAX - row.size())) row.add(pickCard(p, trending));
+        float x = SAFE;
+        String section = null;
+        for (Card c : row) {
+            if (section != null && !section.equals(c.section)) x += SECTION_GAP - CARD_GAP;
+            c.sectionStart = !c.section.equals(section);
+            section = c.section;
+            c.x = x;
+            x += CARD_W + CARD_GAP;
+            fitCard(c);
+        }
+        if (rowFocus.length != row.size()) {
+            rowFocus = new Spring[row.size()];
+            for (int i = 0; i < rowFocus.length; i++) rowFocus[i] = new Spring(0.28f, 0.86f, 0);
+        }
+        rowIndex = 0;
+        for (int i = 0; i < row.size(); i++) if (row.get(i).key.equals(focused)) rowIndex = i;
+        if (row.isEmpty() && (zone == Z_ROW || zone == Z_HERO)) {
+            zone = Z_PILL;
+            setMode(REST);
+        }
+        if (zone == Z_CHIP && chipEntry() == null) zone = Z_PILL;
+        aimRow(true);
+        heroTitleFor = null;
+        scheduleHero();
+    }
+
+    private Card cwCard(ContinueWatching.Entry e, String section) {
+        Card c = new Card();
+        c.kind = CW;
+        c.entry = e;
+        c.key = "cw:" + e.identity();
+        c.section = section;
+        c.title = e.title;
+        String code = e.episode > 0 ? "S" + e.season + " E" + e.episode : "";
+        long left = e.duration > e.position ? (e.duration - e.position + 59_999) / 60_000 : 0;
+        c.left = left > 0 ? left + Ui.tr(" min restantes", " min left") : "";
+        c.meta = code;
+        c.sub = join(code, c.left);
+        c.progress = e.duration > 0 ? Math.min(1, (float) e.position / e.duration) : -1;
+        c.kicker = Ui.tr("Continuar", "Continue") + " · " + e.provider;
+        c.primary = e.external() ? Ui.tr("Continuar em ", "Resume on ") + e.provider : Ui.tr("Continuar", "Resume");
+        c.secondary = "tv".equals(e.kind) ? Ui.tr("Episódios", "Episodes") : Ui.tr("Detalhes", "Details");
+        c.source = () -> {
+            if (!e.external() && "Stremio".equals(e.provider)) try { ContinueWatching.resolve(e); } catch (Exception ignored) {}
+            return e.art;
+        };
+        return c;
+    }
+
+    private Card pickCard(Recs.Pick p, String section) {
+        Card c = new Card();
+        c.kind = PICK;
+        c.pick = p;
+        c.key = "pick:" + Recs.key(p);
+        c.section = section;
+        c.title = p.title == null ? "" : p.title;
+        String service = Recs.serviceName(p);
+        c.kicker = Ui.tr("Em alta", "Trending") + (service.isEmpty() ? "" : " · " + service);
+        c.meta = p.meta == null ? "" : p.meta;
+        c.sub = join("tv".equals(p.kind) ? Ui.tr("Série", "Series") : Ui.tr("Filme", "Movie"), service);
+        c.primary = service.isEmpty() ? Ui.tr("Detalhes", "Details") : Ui.tr("Assistir em ", "Watch on ") + service;
+        c.secondary = "tv".equals(p.kind) ? Ui.tr("Episódios", "Episodes") : Ui.tr("Detalhes", "Details");
+        final String backdrop = p.backdrop;
+        c.source = () -> backdrop;
+        return c;
+    }
+
+    private void fitCard(Card c) {
+        if (cardTitleP == null) return;
+        float width = CARD_W * k;
+        c.titleFit = TextUtils.ellipsize(c.title, new TextPaint(cardTitleP), width, TextUtils.TruncateAt.END).toString();
+        c.subFit = TextUtils.ellipsize(c.sub, new TextPaint(cardSubP), width, TextUtils.TruncateAt.END).toString();
+    }
+
+    private static String join(String a, String b) {
+        if (a == null || a.isEmpty()) return b == null ? "" : b;
+        if (b == null || b.isEmpty()) return a;
+        return a + " · " + b;
+    }
+
+    /** The entry the Resume chip offers (the most recent one), or null. */
+    private ContinueWatching.Entry chipEntry() {
+        return online && !entries.isEmpty() ? entries.get(0) : null;
+    }
+
+    // MARK: - Logos
+
+    /** Each logo at the same optical weight (thin logos larger), centered as a row, never wider than the safe area. */
+    private void layoutLogos() {
+        int n = shelf.size();
+        logoW = new float[n];
+        logoH = new float[n];
+        logoX = new float[n];
+        float total = 0;
+        for (int i = 0; i < n; i++) {
+            HomeApps.Item it = shelf.get(i);
+            if (it.logo != null) {
+                float aspect = (float) it.logo.getWidth() / Math.max(1, it.logo.getHeight());
+                float ink = Math.max(0.15f, Math.min(1, it.logoInk));
+                float hh = (float) Math.sqrt(1100f * it.logoScale * it.logoScale / (aspect * ink));
+                hh = Math.max(18, Math.min(42, hh));
+                float ww = hh * aspect;
+                if (ww > 150) { ww = 150; hh = ww / aspect; }
+                logoW[i] = ww;
+                logoH[i] = hh;
+            } else if (logoNameP != null) {
+                logoW[i] = logoNameP.measureText(it.label) / k;
+                logoH[i] = 26;
+            }
+            total += logoW[i];
+        }
+        float gap = LOGO_GAP;
+        float room = RIGHT - SAFE;
+        if (n > 1 && total + gap * (n - 1) > room) gap = Math.max(32, (room - total) / (n - 1));
+        float scale = n == 0 ? 1 : Math.min(1, room / (total + gap * Math.max(0, n - 1)));
+        float x = 960 - (total * scale + gap * scale * Math.max(0, n - 1)) / 2;
+        for (int i = 0; i < n; i++) {
+            logoW[i] *= scale;
+            logoH[i] *= scale;
+            logoX[i] = x;
+            x += logoW[i] + gap * scale;
+        }
+    }
+
+    private Bitmap whiteLogo(HomeApps.Item it) {
+        Bitmap b = whiteLogos.get(it.key);
+        if (b != null || it.logo == null) return b;
+        int index = shelf.indexOf(it);
+        float scale = 1.12f * k;
+        int ww = Math.max(1, Math.round(logoW[index] * scale)), hh = Math.max(1, Math.round(logoH[index] * scale));
+        Bitmap small = Bitmap.createScaledBitmap(it.logo, ww, hh, true);
+        whiteLogos.put(it.key, small);
+        return small;
+    }
+
+    // MARK: - Size
 
     @Override protected void onMeasure(int widthSpec, int heightSpec) {
         int width = MeasureSpec.getSize(widthSpec), height = MeasureSpec.getSize(heightSpec);
-        float kk = width / 1920f;
-        measure(sky, width, height);
-        measure(heroLayer, width, Math.round(790 * kk));
-        measure(status, Math.round(1160 * kk), Math.round(240 * kk));
-        // Sized to what they draw (the glass and its shadow; the grown tiles and their shadows): smaller layers are
-        // cheaper for the GPU to composite on every frame of the drawer animation.
-        measure(platter, width, Math.round(320 * kk));
-        measure(tiles, width, Math.round(270 * kk));
-        measure(drawerLayer, width, Math.round(600 * kk));
-        measure(continueRow, Math.round(1760 * kk), Math.round(520 * kk));
-        measure(sheetLayer, width, height);
-        measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
+        for (int i = 0; i < getChildCount(); i++) {
+            View v = getChildAt(i);
+            if (v == keys) {
+                v.measure(MeasureSpec.makeMeasureSpec(Math.round((RIGHT - SAFE) * width / 1920f), MeasureSpec.EXACTLY),
+                        MeasureSpec.makeMeasureSpec(Math.round(KEYS_H * width / 1920f), MeasureSpec.EXACTLY));
+            } else {
+                v.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
+            }
+        }
         setMeasuredDimension(width, height);
     }
 
-    private static void measure(View v, int width, int height) {
-        v.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
-    }
-
-    @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
-        int width = r - l, height = b - t;
+    @Override protected void onLayout(boolean changed, int l, int t, int right, int b) {
+        int width = right - l, height = b - t;
         float kk = width / 1920f;
-        sky.layout(0, 0, width, height);
-        place(heroLayer, 0, 0);
-        place(status, width - status.getMeasuredWidth(), 0);
-        place(platter, 0, Math.round(750 * kk));
-        place(tiles, 0, Math.round(790 * kk));
-        place(drawerLayer, 0, Math.round(470 * kk));
-        continueRow.layout(Math.round(80 * kk), Math.round(262 * kk), Math.round(1840 * kk), Math.round(782 * kk));
-        sheetLayer.layout(0, 0, width, height);
-        sheetLayer.setPivotX(width / 2f);
-        sheetLayer.setPivotY(height / 2f);
-        place(toastLayer, (width - toastLayer.getMeasuredWidth()) / 2, 0);
-    }
-
-    private static void place(View v, int x, int y) {
-        v.layout(x, y, x + v.getMeasuredWidth(), y + v.getMeasuredHeight());
+        for (int i = 0; i < getChildCount(); i++) {
+            View v = getChildAt(i);
+            if (v == keys) {
+                int x = Math.round(SAFE * kk), y = Math.round(KEYS_TOP * kk);
+                v.layout(x, y, x + v.getMeasuredWidth(), y + v.getMeasuredHeight());
+            } else {
+                v.layout(0, 0, width, height);
+            }
+        }
     }
 
     @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
@@ -495,91 +653,114 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         h = height;
         k = w / 1920f;
         screen.set(0, 0, w, h);
-        scene.setSize(w, h);
         makePaints();
-        gridLabels = null;
+        makeShaders();
+        layoutLogos();
+        whiteLogos.clear();
+        for (Card c : row) fitCard(c);
+        for (Result res : results) fitResult(res);
         clockMinute = -1;
         updateClock();
-        layoutShelf();
-        layoutStatus();
-        layoutDrawer();
-        layoutLight();
-        hero = null;
-        heroFrom = null;
-        updatePicks();
-        motionDirty = true;
+        updateWeather();
+        heroTitleFor = null;
+    }
+
+    private Paint text(android.graphics.Typeface face, float size, int color) {
+        return Ui.text(face, size * k, color);
     }
 
     private void makePaints() {
-        labelPaint = Ui.text(Ui.medium, 25 * k, 0xC7FFFFFF);
-        labelPaint.setLetterSpacing(0.1f);
-        titlePaint = new TextPaint(Ui.text(Ui.displayMedium, 76 * k, 0xFFFFFFFF));
-        titlePaint.setLetterSpacing(0.005f);
-        metaPaint = Ui.text(Ui.medium, 29 * k, 0xD1FFFFFF);
-        metaPaint.setLetterSpacing(0.014f);
-        clockPaint = Ui.numbers(Ui.thin, 176 * k, 0xFFFFFFFF);
-        clockPaint.setLetterSpacing(-0.01f);
-        for (Paint p : new Paint[] {labelPaint, titlePaint, metaPaint, clockPaint}) p.setShadowLayer(22 * k, 0, 2 * k, 0x59000000);
-        lTitle = Ui.text(Ui.displaySemibold, 76 * k, L_INK);
-        lTitle.setLetterSpacing(0.004f);
-        lTab = Ui.text(Ui.medium, 30 * k, L_DIM);
-        lTabOn = Ui.text(Ui.semibold, 30 * k, L_INK);
-        lCardTitle = Ui.text(Ui.semibold, 31 * k, L_INK);
-        lCardTitle.setLetterSpacing(0.012f);
-        lCardMeta = Ui.text(Ui.medium, 25 * k, L_DIM);
-        lQuote = Ui.numbers(Ui.regular, 21 * k, L_FAINT);
-        lTip = Ui.text(Ui.semibold, 25 * k, L_INK);
-        lTip.setTextAlign(Paint.Align.CENTER);
-        lightGradient = null;
-        buttonPaint = Ui.text(Ui.semibold, 29 * k, INK);
-        capsuleText = Ui.numbers(Ui.medium, 29 * k, 0xF2FFFFFF);
-        tipPaint = Ui.text(Ui.semibold, 25 * k, 0xF2FFFFFF);
-        tipPaint.setTextAlign(Paint.Align.CENTER);
-        tipPaint.setShadowLayer(16 * k, 0, 1 * k, 0x99000000);
-        // Quotes: a subtle detail, smaller and dimmer than the rest.
-        quotePaint = Ui.numbers(Ui.regular, 21 * k, 0xB8FFFFFF);
-        quotePaint.setShadowLayer(14 * k, 0, 1 * k, 0x99000000);
-        staleQuote = Ui.text(Ui.medium, 21 * k, 0x99FFFFFF);
-        staleQuote.setTextAlign(Paint.Align.RIGHT);
-        rowTitle = Ui.text(Ui.semibold, 25 * k, 0xB3FFFFFF);
-        drawerLabel = Ui.text(Ui.medium, 23 * k, 0xEBFFFFFF);
-        drawerLabel.setTextAlign(Paint.Align.CENTER);
-        cardTitle = Ui.text(Ui.semibold, 25 * k, 0xB3FFFFFF);
-        cardText = Ui.text(Ui.medium, 29 * k, 0xF2FFFFFF);
-        cardDim = Ui.numbers(Ui.medium, 23 * k, 0xADFFFFFF);
-        cardDimRight = Ui.text(Ui.medium, 21 * k, 0x99FFFFFF);
-        cardDimRight.setTextAlign(Paint.Align.RIGHT);
-        bigTemp = Ui.numbers(Ui.light, 100 * k, 0xFFFFFFFF);
-        hourPaint = Ui.numbers(Ui.medium, 22 * k, 0xADFFFFFF);
-        hourPaint.setTextAlign(Paint.Align.CENTER);
-        hourTemp = Ui.numbers(Ui.medium, 26 * k, 0xF2FFFFFF);
-        hourTemp.setTextAlign(Paint.Align.CENTER);
-        pricePaint = Ui.numbers(Ui.medium, 26 * k, 0xF2FFFFFF);
-        pricePaint.setTextAlign(Paint.Align.RIGHT);
-        changePaint = Ui.numbers(Ui.semibold, 21 * k, 0xFFFFFFFF);
-        changePaint.setTextAlign(Paint.Align.CENTER);
-        sheetTitle = Ui.text(Ui.displaySemibold, 40 * k, 0xFFFFFFFF);
-        sheetTitle.setTextAlign(Paint.Align.CENTER);
-        gridLabel = new TextPaint(Ui.text(Ui.medium, 24 * k, 0x99FFFFFF));
-        gridLabel.setTextAlign(Paint.Align.CENTER);
-        toastPaint = new TextPaint(Ui.text(Ui.medium, 26 * k, 0xF2FFFFFF));
-        shadow.setMaskFilter(new BlurMaskFilter(26 * k, BlurMaskFilter.Blur.NORMAL));
-        shadowSoft.setMaskFilter(new BlurMaskFilter(12 * k, BlurMaskFilter.Blur.NORMAL));
-        shadowDeep.setMaskFilter(new BlurMaskFilter(30 * k, BlurMaskFilter.Blur.NORMAL));
-        halo.setMaskFilter(new BlurMaskFilter(22 * k, BlurMaskFilter.Blur.NORMAL));
-        border.setStyle(Paint.Style.STROKE);
-        border.setStrokeWidth(2 * k);
-        rim.setStyle(Paint.Style.STROKE);
-        rim.setStrokeWidth(2.5f * k);
+        clockP = text(Ui.medium, 40, Look.INK);
+        clockP.setLetterSpacing(-0.01f);
+        weatherP = text(Ui.regular, 26, Look.INK);
+        pillP = text(Ui.regular, 34, Look.INK);
+        pillSmallP = text(Ui.regular, 24, Look.INK);
+        queryP = text(Ui.semibold, 40, Look.INK);
+        queryP.setLetterSpacing(-0.02f);
+        chipP = text(Ui.regular, 24, Look.INK);
+        chipStrongP = text(Ui.medium, 24, Look.INK);
+        kickerP = text(Ui.medium, 24, Ui.alpha(Look.INK, 0.72f));
+        heroTitleP = new TextPaint(text(Ui.displaySemibold, 84, Look.INK));
+        heroTitleP.setLetterSpacing(-0.03f);
+        metaP = text(Ui.regular, 26, Ui.alpha(Look.INK, 0.8f));
+        buttonP = text(Ui.semibold, 26, Look.INK);
+        button2P = text(Ui.medium, 26, Look.INK);
+        sectionP = text(Ui.medium, 24, Ui.alpha(Look.INK, 0.72f));
+        cardTitleP = text(Ui.medium, 22, Look.INK);
+        cardSubP = text(Ui.regular, 22, Look.INK);
+        resultTitleP = text(Ui.semibold, 26, Look.INK);
+        whereP = text(Ui.regular, 22, Ui.alpha(Look.INK, 0.68f));
+        recentP = text(Ui.regular, 24, Look.INK);
+        logoNameP = text(Ui.semibold, 26, Look.INK);
+        labelP = text(Ui.medium, 24, Ui.alpha(Look.INK, 0.66f));
+        hintP = text(Ui.regular, 24, Ui.alpha(Look.INK, 0.85f));
+        kbdP = text(Ui.semibold, 20, Ui.alpha(Look.INK, 0.85f));
+        allTitleP = text(Ui.displaySemibold, 56, Look.INK);
+        allTitleP.setLetterSpacing(-0.025f);
+        allItemP = text(Ui.regular, 36, Look.INK);
+        allItemP.setLetterSpacing(-0.015f);
+        allItemOnP = text(Ui.semibold, 36, Look.ON_INK);
+        allItemOnP.setLetterSpacing(-0.015f);
+        editP = text(Ui.medium, 24, Look.INK);
+        menuItemP = text(Ui.regular, 28, Look.INK);
+        menuItemOnP = text(Ui.semibold, 28, Look.ON_INK);
+        bigTitleP = text(Ui.semibold, 32, Look.INK);
+        bigSubP = text(Ui.regular, 24, Ui.alpha(Look.INK, 0.7f));
+        setupTitleP = text(Ui.semibold, 36, Look.INK);
+        setupTitleP.setLetterSpacing(-0.02f);
+        setupBodyP = text(Ui.regular, 26, Ui.alpha(Look.INK, 0.72f));
+        setupButtonP = text(Ui.semibold, 26, Look.INK);
+        offlineP = text(Ui.regular, 34, Ui.alpha(Look.INK, 0.7f));
+        offlineLineP = text(Ui.regular, 26, Look.INK);
+        offlineLineP.setTextAlign(Paint.Align.CENTER);
+        toastP = text(Ui.medium, 26, Look.INK);
+        stroke.setStyle(Paint.Style.STROKE);
+        stroke.setStrokeCap(Paint.Cap.ROUND);
+        stroke.setStrokeJoin(Paint.Join.ROUND);
+        shadow.setMaskFilter(new BlurMaskFilter(40 * k, BlurMaskFilter.Blur.NORMAL));
     }
 
-    // MARK: - Frames: 60 per second while something moves; nothing is redrawn when still
+    private void makeShaders() {
+        int ground = 0xFF0C0A0A;
+        topScrim = new LinearGradient(0, 0, 0, h, new int[] {Ui.alpha(ground, 0.35f), 0, 0, Ui.alpha(ground, 0.55f)},
+                new float[] {0, 0.24f, 0.6f, 1}, Shader.TileMode.CLAMP);
+        dayTop = new LinearGradient(0, 0, 0, h * 0.26f, new int[] {Ui.alpha(Look.DAY_GROUND, 0.62f), Ui.alpha(Look.DAY_GROUND, 0.3f), 0},
+                new float[] {0, 0.46f, 1}, Shader.TileMode.CLAMP);
+        dayBottom = new LinearGradient(0, h, 0, h * 0.58f, new int[] {Ui.alpha(Look.DAY_GROUND, 0.94f), Ui.alpha(Look.DAY_GROUND, 0.8f),
+                Ui.alpha(Look.DAY_GROUND, 0.36f), 0}, new float[] {0, 0.29f, 0.62f, 1}, Shader.TileMode.CLAMP);
+        int hero = 0xFF08090B;
+        heroLeft = new LinearGradient(0, 0, w, 0, new int[] {Ui.alpha(hero, 0.88f), Ui.alpha(hero, 0.5f), 0},
+                new float[] {0, 0.38f, 0.68f}, Shader.TileMode.CLAMP);
+        heroBottom = new LinearGradient(0, h, 0, 0, new int[] {Ui.alpha(hero, 0.96f), Ui.alpha(hero, 0.6f), 0},
+                new float[] {0, 0.34f, 0.58f}, Shader.TileMode.CLAMP);
+        heroTop = new LinearGradient(0, 0, 0, h * 0.2f, Ui.alpha(hero, 0.5f), 0, Shader.TileMode.CLAMP);
+        bottomScrim = null;
+        offlineGlow = new RadialGradient(1060 * k, 550 * k, 900 * k, new int[] {0x52100B09, 0x38100B09, 0},
+                new float[] {0, 0.5f, 1}, Shader.TileMode.CLAMP);
+    }
+
+    // MARK: - Frames: 60 per second while something moves; otherwise once a minute for the clock
 
     private void wakeFrames() {
         if (!running || frameScheduled) return;
-        handler.removeCallbacks(idleFrame); frameScheduled = true;
+        handler.removeCallbacks(idleFrame);
+        frameScheduled = true;
         Choreographer.getInstance().postFrameCallback(this);
     }
+
+    /** Something changed: redraw everything once. */
+    private void changed() {
+        invalidateAll();
+        wakeFrames();
+    }
+
+    private void invalidateAll() {
+        ground.invalidate();
+        chrome.invalidate();
+        overlay.invalidate();
+        keys.invalidate();
+    }
+
     @Override public void doFrame(long frameTimeNanos) {
         frameScheduled = false;
         if (!running) return;
@@ -587,1036 +768,976 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float dt = lastNanos == 0 ? 1 / 60f : Math.min(0.05f, (frameTimeNanos - lastNanos) / 1e9f);
         lastNanos = frameTimeNanos;
         long up = SystemClock.uptimeMillis();
-
-        boolean tilesMoving = step(tileFocus, dt);
-        boolean statusMoving = step(statusFocus, dt);
-        boolean heroMoving = heroFocus.step(dt);
-        boolean topMoving = step(topFocus, dt), cardsMoving = step(cardFocus, dt);
-        if (topMoving) status.invalidate();
-        heroMoving |= topMoving | cardsMoving;
-        boolean drawerItemsMoving = step(drawerFocus, dt);
-        boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
-        boolean drawerMoving = drawer.step(dt);
-        boolean sheetMoving = sheet.step(dt);
-        boolean toastFading = tickToast(up);
-        boolean heroFading = tickHeroFade(up);
-        boolean bgFading = tickBackgroundFade(up);
-        boolean nightMoving = tickNight(up);
-
-        if (drawerMoving || sheetMoving || motionDirty) updateMotion();
-        // Opening and closing the drawer only moves the cached layers: redrawing the glass on every frame made the TV
-        // drop frames (measured: ~50 ms of GPU per frame). The app tiles have no glass; the top buttons fade out as
-        // they rise; the drawer is drawn resting in place; the glass shelf is redrawn once the drawer stops, so the
-        // glass shows the background where it ended up.
-        if (tilesMoving || tilesDirty) tiles.invalidate();
-        if (statusMoving || statusDirty || bgFading) status.invalidate();
-        if (heroMoving || heroDirty || heroFading) heroLayer.invalidate();
-        if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
-        if (gridMoving || gridDirty) sheetLayer.invalidate();
-        if (drawerMoving || bgFading) sky.invalidate();
-        if (bgFading || (drawerWasMoving && !drawerMoving)) platter.invalidate();
-        drawerWasMoving = drawerMoving;
-        tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = false;
-        if (updateClock()) {
-            layoutStatus();
-            status.invalidate();
-            if (hero != null && hero.clock) {
-                refreshHero(false);
-                heroLayer.invalidate();
-            }
+        boolean states = contentT.step(dt) | searchT.step(dt);
+        boolean over = overlayT.step(dt) | allScroll.step(dt);
+        boolean scroll = rowScroll.step(dt);
+        boolean cards = false;
+        for (Spring s : rowFocus) cards |= s.step(dt);
+        for (Result res : results) cards |= res.focus.step(dt);
+        cards |= searchScroll.step(dt);
+        for (Section sec : sections) cards |= sec.scroll.step(dt);
+        boolean heroFade = heroFadeAt != 0 && up - heroFadeAt < FADE_MS + 32;
+        if (!heroFade && heroFadeAt != 0) { heroFadeAt = 0; heroFrom = null; ground.invalidate(); }
+        boolean landFade = landFadeAt != 0 && up - landFadeAt < 2000 + 32;
+        if (!landFade && landFadeAt != 0) { landFadeAt = 0; landFrom = null; ground.invalidate(); }
+        boolean toastMoving = tickToast(up);
+        if (states || heroFade || landFade || over) ground.invalidate();
+        if (states || scroll || cards) chrome.invalidate();
+        if (over || toastMoving) overlay.invalidate();
+        if (states) {
+            float sa = (float) searchT.value;
+            keys.setAlpha(Ui.clamp(sa));
+            keys.setVisibility(sa > 0.01f ? VISIBLE : INVISIBLE);
         }
-
-        // Busy: something is moving, or the sheet or the drawer is open.
-        boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
-                || sheetMoving || toastFading || heroFading || bgFading || nightMoving;
-        if (busy) wakeFrames();
-        else {
+        overlay.setVisibility(overlayT.value > 0.002f || overlayKind != OV_NONE || toast != null ? VISIBLE : INVISIBLE);
+        if (updateClock()) chrome.invalidate();
+        boolean busy = states || over || scroll || cards || heroFade || landFade || toastMoving;
+        if (busy) {
+            wakeFrames();
+        } else {
             lastNanos = 0;
-            long delay = 60000 - Math.floorMod(System.currentTimeMillis(), 60000);
-            if (toast != null) delay = Math.min(delay, Math.max(1, toastAt + TOAST_MS - 450 - up));
+            long delay = 60_000 - Math.floorMod(System.currentTimeMillis(), 60_000);
+            if (toast != null) delay = Math.min(delay, Math.max(16, toastAt + TOAST_MS - up));
             handler.postDelayed(idleFrame, delay);
         }
-    }
-
-    private static boolean step(Spring[] springs, float dt) {
-        boolean moving = false;
-        for (Spring s : springs) moving |= s.step(dt);
-        return moving;
-    }
-
-    /** Drawer and sheet: the layers' positions and opacity (without redrawing their content). */
-    private void updateMotion() {
-        float d = drawer.value, dc = Ui.clamp(d), s = Ui.clamp(sheet.value);
-        float home = 1 - s, top = home * (1 - smoothstep(0, 0.32f, dc));
-        float shift = SHIFT * k;
-        float lift = -d * shift;
-        continueRow.setVisibility(hasContinue() && !sheetOpen && !drawerOpen ? VISIBLE : INVISIBLE);
-        continueRow.setAlpha(top); continueRow.setTranslationY(lift);
-        show(heroLayer, top, lift);
-        show(status, top, lift);
-        show(platter, home, lift);
-        show(tiles, home, lift);
-        float da = home * smoothstep(0.1f, 0.6f, dc);
-        drawerLayer.setTranslationY((1 - d) * shift);
-        drawerLayer.setAlpha(da);
-        drawerLayer.setVisibility(da > 0.002f ? VISIBLE : INVISIBLE);
-        sheetLayer.setVisibility(s > 0.001f || sheetOpen ? VISIBLE : INVISIBLE);
-        sheetLayer.setAlpha(s);
-        float scale = 1.04f - 0.04f * s;
-        sheetLayer.setScaleX(scale);
-        sheetLayer.setScaleY(scale);
-    }
-
-    private static void show(View v, float alpha, float translationY) {
-        v.setAlpha(alpha);
-        v.setTranslationY(translationY);
-        v.setVisibility(alpha > 0.002f ? VISIBLE : INVISIBLE);
     }
 
     private boolean updateClock() {
         long now = System.currentTimeMillis();
         long minute = now / 60_000;
-        if (minute == clockMinute || clockPaint == null) return false;
+        if (minute == clockMinute) return false;
         clockMinute = minute;
         clockText = Ui.clock(now);
         return true;
     }
 
-    private void updatePalette() {
+    private void updateWeather() {
         HomeData.Weather wx = data.weather;
-        Shaders.sky(scene.palette, System.currentTimeMillis(), wx.sunrise, wx.sunset);
-        scene.applyPalette();
+        String city = Setup.city();
+        weatherText = Double.isNaN(wx.temp) ? city : join(HomeData.degrees(wx.temp), city).replace(" · ", " ");
     }
 
-    // MARK: - Recommendations: hero and background
+    // MARK: - Landscape and backdrops
 
-    private Recs.Pick currentPick() {
-        return picks.isEmpty() ? null : picks.get(Math.min(pickIndex, picks.size() - 1));
-    }
+    private boolean landLoading;
 
-    /** This hour's picks: the cards and the background image (called when Recs notifies and every 15 s). */
-    private void updatePicks() {
-        if (labelPaint == null) return;
-        updateCards();
-    }
-
-    private static boolean samePicks(List<Recs.Pick> a, List<Recs.Pick> b) {
-        if (a.size() != b.size()) return false;
-        for (int i = 0; i < a.size(); i++) if (!Recs.key(a.get(i)).equals(Recs.key(b.get(i)))) return false;
-        return true;
-    }
-
-    /**
-     * Rebuilds the hero. With `animate`, a different title slides in while the previous one slides out; details that
-     * arrive later (genre, runtime) just appear.
-     */
-    private void refreshHero(boolean animate) {
-        Hero next = makeHero();
-        if (next.sameText(hero) && hero.dots == next.dots && hero.dot == next.dot && hero.button == next.button) return;
-        boolean other = hero != null && (hero.clock != next.clock || !hero.title.equals(next.title));
-        if (animate && other) {
-            heroFrom = hero;
-            heroFadeAt = SystemClock.uptimeMillis();
-        }
-        boolean layoutChanged = hero == null || hero.clock != next.clock;
-        hero = next;
-        heroDirty = true;
-        if (layoutChanged) layoutStatus();
-    }
-
-    private Hero makeHero() {
-        Hero h = new Hero();
-        Recs.Pick p = currentPick();
-        if (p == null) {
-            h.clock = true;
-            h.label = Ui.date(System.currentTimeMillis()).toUpperCase(Ui.en ? java.util.Locale.US : Ui.PT);
-            return h;
-        }
-        h.label = Recs.periodLabel();
-        h.title = p.title == null ? "" : p.title;
-        h.meta = p.meta == null ? "" : p.meta;
-        h.button = p.pkg != null;
-        h.dots = picks.size();
-        h.dot = pickIndex;
-        h.titleLayout = StaticLayout.Builder.obtain(h.title, 0, h.title.length(), titlePaint, Math.max(1, Math.round(HERO_TITLE_W * k)))
-                .setMaxLines(2)
-                .setEllipsize(TextUtils.TruncateAt.END)
-                .setLineSpacing(0, 0.94f)
-                .setIncludePad(false)
-                .build();
-        return h;
-    }
-
-    /** ←/→ on the hero: the next (or previous) of this hour's picks. */
-    private boolean browse(int dir) {
-        if (picks.size() < 2) return false;
-        int next = pickIndex;
-        for (int i = 0; i < picks.size(); i++) {
-            next = (next + dir + picks.size()) % picks.size();
-            if (zone != Z_HERO || picks.get(next).pkg != null) break;
-        }
-        if (next == pickIndex) return false;
-        pickIndex = next;
-        heroSlide = dir;
-        refreshHero(true);
-        Backdrop b = recs.backdrop(currentPick());
-        if (b != null) showBackdrop(b);
-        return true;
-    }
-
-    /** Swaps the background with a cross-fade (from one image to another, from the gradient to an image, or back). */
-    private void showBackdrop(Backdrop b) {
-        if (b == bgTo) return;
-        long up = SystemClock.uptimeMillis();
-        // In the middle of another swap, start from whichever is more visible.
-        if (bgFadeAt == 0 || fadeEase(bgFadeAt, up) >= 0.5f) bgFrom = bgTo;
-        boolean firstImage = bgTo == null && bgFrom == null && b != null;
-        bgTo = b;
-        bgFadeAt = firstImage ? 0 : up;
-        if (firstImage) { sky.invalidate(); platter.invalidate(); }
-        nightPair = false;
-        if (b == null || glassOf(b) == null) return;
-        if (bgFrom == null || glassOf(bgFrom) == null) {
-            scene.setFrost(frostOf(b));
-            scene.setGlassImage(glassOf(b));
-        } else {
-            scene.setGlassImages(glassOf(bgFrom), glassOf(b));
-        }
-    }
-
-    /** What the glass shows: the photo lightened (by day), darkened (at night) or blended in between. */
-    private int[] glassOf(Backdrop b) {
-        if (b.nightGlass == null || night <= 0.001f) return b.lightGlass;
-        if (night >= 0.999f) return b.nightGlass;
-        // During the transition, the blend (only for the current background; a photo fading in uses the nearer side).
-        if (b != bgTo) return night < 0.5f ? b.lightGlass : b.nightGlass;
-        for (int i = 0; i < glassNight.length; i++) glassNight[i] = mix(b.lightGlass[i], b.nightGlass[i], night);
-        return glassNight;
-    }
-
-    /** No photo: the glass reads the background's own gray (not Scene's default aurora, which isn't on screen). */
-    private void neutralGlass() {
-        int color = blend(0xFFEBEBF0, 0xFF141416, night);
-        java.util.Arrays.fill(neutralFrostPx, color);
-        java.util.Arrays.fill(neutralGlassPx, color);
-        scene.setFrost(neutralFrostPx);
-        scene.setGlassImage(neutralGlassPx);
-        nightPair = false;
-    }
-
-    /** What the frosted glass shows (drawer, toasts): the blurred photo, darkened at night. */
-    private int[] frostOf(Backdrop b) {
-        if (b.nightFrost == null || night <= 0.001f) return b.frost;
-        if (night >= 0.999f) return b.nightFrost;
-        if (b != bgTo) return night < 0.5f ? b.frost : b.nightFrost;
-        for (int i = 0; i < frostNight.length; i++) frostNight[i] = mix(b.frost[i], b.nightFrost[i], night);
-        return frostNight;
-    }
-
-    // MARK: - Night look
-
-    /** Day or night right now (from the sun at your location); `animate`: with the transition. */
-    private void checkNight(boolean animate) {
-        boolean want = data.isNight(System.currentTimeMillis());
-        if (want == nightTarget) return;
-        nightTarget = want;
-        if (animate && running) {
-            nightFrom = night;
-            nightAt = SystemClock.uptimeMillis();
-        } else {
-            night = want ? 1 : 0;
-            nightAt = 0;
-            nightChanged();
-        }
-    }
-
-    /** Advances the day ⇄ night transition; true while it runs. */
-    private boolean tickNight(long up) {
-        if (nightAt == 0) return false;
-        float t = Ui.clamp((up - nightAt) / NIGHT_MS), to = nightTarget ? 1 : 0;
-        night = nightFrom + (to - nightFrom) * t * t * (3 - 2 * t);
-        if (t >= 1) {
-            night = to;
-            nightAt = 0;
-        }
-        nightChanged();
-        return true;
-    }
-
-    /** Redraws for the current night value (the glass now reads the lightened, blended or darkened photo). */
-    private void nightChanged() {
-        if (bgFadeAt == 0 && bgTo != null && bgTo.lightGlass != null) {
-            scene.setFrost(frostOf(bgTo));
-            if (nightAt != 0 && bgTo.nightGlass != null) {
-                if (!nightPair) {
-                    scene.setGlassImages(bgTo.lightGlass, bgTo.nightGlass);
-                    nightPair = true;
+    /** The landscape for now; a change (sunset) cross-fades over 2 s. Decoded in the background. */
+    private void checkLandscape(boolean animate) {
+        final int want = Landscape.now(getContext(), data.weather, System.currentTimeMillis());
+        if ((land != null && land.kind == want) || landLoading) return;
+        landLoading = true;
+        final Context c = getContext().getApplicationContext();
+        WORK.execute(() -> {
+            final Landscape next = Landscape.load(c, want);
+            handler.post(() -> {
+                landLoading = false;
+                if (next == null) return;
+                if (animate && land != null && running) {
+                    landFrom = land;
+                    landFadeAt = SystemClock.uptimeMillis();
                 }
-                scene.setGlassMix(night);
-            } else {
-                scene.setGlassImage(glassOf(bgTo));
-                nightPair = false;
-            }
-        } else if (bgFadeAt == 0 && bgTo == null) {
-            neutralGlass();
+                land = next;
+                changed();
+            });
+        });
+    }
+
+    private boolean day() {
+        return land != null && land.day();
+    }
+
+    /** The focused card's backdrop, after the focus has rested for a moment (moving fast doesn't decode pictures). */
+    private void scheduleHero() {
+        handler.removeCallbacks(heroLoad);
+        handler.postDelayed(heroLoad, HERO_DELAY);
+    }
+
+    private void loadHero() {
+        if (row.isEmpty() || !running) return;
+        Card c = row.get(Math.min(rowIndex, row.size() - 1));
+        HomeArt.Hero hero = art.hero(c.key, c.source);
+        if (!c.key.equals(heroKey)) {
+            heroKey = c.key;
+            if (hero == null) return;      // it arrives later (onArt)
         }
-        heroDirty = statusDirty = tilesDirty = drawerDirty = true;
-        sky.invalidate();
-        platter.invalidate();
+        if (hero == null || hero == heroTo) return;
+        heroFrom = heroTo;
+        heroTo = hero;
+        heroFadeAt = SystemClock.uptimeMillis();
+        ground.invalidate();
+        wakeFrames();
     }
 
-    /** How dark it is: 0 = day, 1 = night (in between during the transition). */
-    private float dark() {
-        return night;
-    }
+    // MARK: - Drawing: ground (landscape, blurred landscape, backdrops)
 
-    /** The day color or the night color, depending on the night value (blended during the transition). */
-    private int tone(int onLight, int onDark) {
-        return blend(onLight, onDark, dark());
-    }
-
-    private float tone(float onLight, float onDark) {
-        return onLight + (onDark - onLight) * dark();
-    }
-
-    /** Text colors for the current night value (dark by day, white at night). */
-    private void applyTone() {
-        continueRow.tone(night >= 0.5f);
-        lTitle.setColor(tone(L_INK, WHITE));
-        lTab.setColor(tone(L_DIM, 0xFF8E8E93));
-        lTabOn.setColor(tone(L_INK, WHITE));
-        lCardTitle.setColor(tone(L_INK, WHITE));
-        lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
-        lQuote.setColor(tone(L_FAINT, 0xB8FFFFFF));
-        lTip.setColor(tone(L_INK, WHITE));
-        staleQuote.setColor(tone(L_FAINT, 0x99FFFFFF));
-    }
-
-    private boolean tickBackgroundFade(long up) {
-        if (bgFadeAt == 0) return false;
-        float e = fadeEase(bgFadeAt, up);
-        if (bgTo != null && bgFrom != null && glassOf(bgFrom) != null && glassOf(bgTo) != null) {
-            int[] from = frostOf(bgFrom), to = frostOf(bgTo);
-            for (int i = 0; i < frostMix.length; i++) frostMix[i] = mix(from[i], to[i], e);
-            scene.setFrost(frostMix);
-            scene.setGlassMix(e);
-        }
-        if (e >= 1) {
-            bgFadeAt = 0;
-            bgFrom = null;
-            if (bgTo == null) {
-                neutralGlass();
-            } else {
-                scene.setFrost(frostOf(bgTo));
-                if (glassOf(bgTo) != null) scene.setGlassImage(glassOf(bgTo));
+    private void drawGround(Canvas c) {
+        float ct = Ui.clamp(contentT.value), st = Ui.clamp(searchT.value);
+        float dim = st;
+        c.drawColor(Look.GROUND);
+        float restAlpha = 1 - ct;
+        if (restAlpha > 0.004f) {
+            long up = SystemClock.uptimeMillis();
+            float fade = landFadeAt == 0 ? 1 : Ui.clamp((up - landFadeAt) / 2000f);
+            if (landFrom != null && fade < 1) drawLandscape(c, landFrom, restAlpha);
+            if (land != null) drawLandscape(c, land, restAlpha * (landFrom != null ? fade : 1));
+            if (!online) {
+                fill.setColor(Ui.alpha(0xFF000000, 0.3f * restAlpha));
+                c.drawRect(screen, fill);
+                scrim.setShader(offlineGlow);
+                scrim.setAlpha(Math.round(255 * restAlpha));
+                c.drawRect(screen, scrim);
+                scrim.setShader(null);
+                scrim.setAlpha(255);
             }
         }
-        return true;
-    }
-
-    private boolean tickHeroFade(long up) {
-        if (heroFadeAt == 0) return false;
-        if (fadeEase(heroFadeAt, up) >= 1) {
-            heroFadeAt = 0;
-            heroFrom = null;
+        if (editing) {
+            fill.setColor(0x66000000);
+            c.drawRect(screen, fill);
         }
-        return true;
+        if (ct > 0.004f) drawBackdrop(c, ct);
+        if (dim > 0.004f) drawDim(c, dim);
     }
 
-    private float fadeEase(long start, long up) {
-        return fadeEase(start, up, FADE_MS);
-    }
-
-    private static float fadeEase(long start, long up, float duration) {
-        float t = Ui.clamp((up - start) / duration);
-        return t * t * (3 - 2 * t);
-    }
-
-    private static int mix(int a, int b, float f) {
-        int r = Math.round(((a >> 16) & 255) * (1 - f) + ((b >> 16) & 255) * f);
-        int g = Math.round(((a >> 8) & 255) * (1 - f) + ((b >> 8) & 255) * f);
-        int bl = Math.round((a & 255) * (1 - f) + (b & 255) * f);
-        return 0xFF000000 | (r << 16) | (g << 8) | bl;
-    }
-
-    // MARK: - Background
-
-    private void drawSky(Canvas c) {
-        drawLightSky(c);
-    }
-
-    /** Blends a color on top (the drawer's veil) as part of drawing the image, without another layer. */
-    private static android.graphics.ColorFilter veil(float amount, int color) {
-        if (amount <= 0.002f) return null;
-        float keep = 1 - amount;
-        return new android.graphics.ColorMatrixColorFilter(new float[] {
-            keep, 0, 0, 0, ((color >> 16) & 255) * amount,
-            0, keep, 0, 0, ((color >> 8) & 255) * amount,
-            0, 0, keep, 0, (color & 255) * amount,
-            0, 0, 0, 1, 0});
-    }
-
-    private void drawImage(Canvas c, Bitmap image, float alpha) {
-        if (image == null || alpha <= 0.004f) return;
-        imagePaint.setAlpha(Math.round(255 * Math.min(1, alpha)));
-        c.drawBitmap(image, null, screen, imagePaint);
-    }
-
-    // MARK: - Hero
-
-    private static void text(Canvas c, String s, float x, float y, Paint p, int color, float alpha) {
-        if (s == null || s.isEmpty()) return;
-        p.setColor(Ui.alpha(color, alpha));
-        c.drawText(s, x, y, p);
-    }
-
-    // MARK: - Corner capsule: time and weather (when the hero shows a recommendation) and icon-only buttons
-
-    /** Live TV, the inputs with a device on, All Apps and Settings. */
-    private static List<HomeApps.Item> statusList(Context c) {
-        List<HomeApps.Item> list = new ArrayList<>();
-        list.addAll(HomeApps.shortcuts(c));
-        list.add(HomeApps.settings());
-        return list;
-    }
-
-    private void setStatusItems(List<HomeApps.Item> list) {
-        boolean same = list.size() == statusItems.size();
-        for (int i = 0; same && i < list.size(); i++) same = list.get(i).key.equals(statusItems.get(i).key);
-        String focusedKey = statusIndex < statusItems.size() ? statusItems.get(statusIndex).key : null;
-        statusItems = list;
-        if (!same || statusFocus.length != list.size()) {
-            statusFocus = new Spring[list.size()];
-            statusRects = new RectF[list.size()];
-            int index = Math.min(statusIndex, Math.max(0, list.size() - 1));
-            for (int i = 0; i < statusFocus.length; i++) {
-                statusFocus[i] = new Spring(0.26f, 0.85f, 0);
-                statusRects[i] = new RectF();
-                if (list.get(i).key.equals(focusedKey)) index = i;   // a device came on: keep focus on the same button
-            }
-            statusIndex = index;
-            if (zone == Z_STATUS && list.isEmpty()) zone = Z_SHELF;
-            aim(statusFocus, zone == Z_STATUS ? statusIndex : -1, true);   // only the capsule's springs
-            statusDirty = true;
+    /** Search, All apps and menus sit on the landscape blurred and darkened (brightness 0.4). */
+    private void drawDim(Canvas c, float alpha) {
+        if (land != null) {
+            image.setAlpha(Math.round(255 * alpha));
+            c.drawBitmap(land.blurred, null, screen, image);
+            image.setAlpha(255);
         }
-        layoutStatus();
+        fill.setColor(Ui.alpha(0xFF000000, (land == null ? 0.9f : land.day() ? 0.7f : 0.6f) * alpha));
+        c.drawRect(screen, fill);
     }
 
-    private boolean showInfo() {
-        return hero != null && !hero.clock;
-    }
-
-    private void layoutStatus() {
-        if (capsuleText == null) return;
-        int n = statusItems.size();
-        float b = BUTTON * k, gap = 4 * k, pad = 6 * k;
-        float info = 0;
-        if (showInfo()) {
-            info = 26 * k + capsuleText.measureText(clockText);
-            HomeData.Weather wx = data.weather;
-            if (!Double.isNaN(wx.temp)) {
-                info += 22 * k + Symbols.width(getContext(), Symbols.weather(wx.code, wx.isDay), 24 * k) + 8 * k
-                        + capsuleText.measureText(HomeData.degrees(wx.temp));
-            }
-            info += 22 * k;
-        }
-        capsuleInfoW = info;
-        float buttons = n * b + Math.max(0, n - 1) * gap;
-        float right = CONTENT_R * k, top = CAPSULE_TOP * k;
-        float left = right - pad - buttons - (info > 0 ? info + 12 * k : pad);
-        capsuleRect.set(left, top, right, top + CAPSULE_H * k);
-        float x = right - pad - buttons, cy = capsuleRect.centerY();
-        for (int i = 0; i < n; i++) {
-            statusRects[i].set(x, cy - b / 2, x + b, cy + b / 2);
-            x += b + gap;
-        }
-        statusDirty = true;
-    }
-
-    // MARK: - Quotes and shelf
-
-    private void setShelf(List<HomeApps.Item> list) {
-        boolean same = list.size() == shelf.size();
-        for (int i = 0; same && i < list.size(); i++) same = list.get(i).key.equals(shelf.get(i).key);
-        shelf = list;
-        if (list.isEmpty() && zone == Z_SHELF) { zone = Z_TOP; topIndex = 6; }
-        if (!same || tileFocus.length != list.size()) {
-            tileFocus = new Spring[list.size()];
-            tileRects = new RectF[list.size()];
-            for (int i = 0; i < tileFocus.length; i++) {
-                tileFocus[i] = new Spring(0.34f, 0.74f, 0);
-                tileRects[i] = new RectF();
-            }
-            shelfIndex = Math.min(shelfIndex, Math.max(0, list.size() - 1));
-            retarget(true);
-            layoutShelf();
-        }
-        tilesDirty = true;
-        platter.invalidate();
-    }
-
-    private void layoutShelf() {
-        int n = shelf.size();
-        float pad = SHELF_PAD * k, gap = TILE_GAP * k, th = L_TILE_H * k;
-        float full = (CONTENT_R - MARGIN) * k;
-        float tw = Math.min(TILE_MAX_W * k, (full - Math.max(0, n - 1) * gap) / Math.max(1, n));
-        float width = n * tw + Math.max(0, n - 1) * gap, left = (w - width) / 2f;
-        float top = L_PLATTER_TOP * k;
-        platterRect.set(left - pad, top, left + width + pad, top + th + 2 * pad);
-        float x = left, y = top + pad;
-        for (int i = 0; i < n; i++) {
-            tileRects[i].set(x, y, x + tw, y + th);
-            x += tw + gap;
-        }
-        crispLogos.clear();
-    }
-
-    /** Shelf layer: the glass bar and its shadow (it only changes with the background). */
-    private void drawPlatter(Canvas c) {
-        if (shelf.isEmpty()) return;
-        float radius = (TILE_RADIUS + SHELF_PAD) * k;
-        tmp.set(platterRect);
-        tmp.offset(0, 18 * k);
-        shadow.setColor(tone(0x1F000000, 0x52000000));
-        c.drawRoundRect(tmp, radius, radius, shadow);
-        // White glass by day; smoked glass at night.
-        scene.liquid(c, platterRect, radius, tone(0xFFFFFFFF, SMOKE), tone(0.42f, 0.12f), tone(0.03f, 0.08f),
-                tone(30, 34) * k, tone(22, 28) * k, tone(0.65f, 0.95f), 1);
-    }
-
-    /** Coin logo + price in the configured currency, in a row at the right end of the tab bar. */
-    private void drawQuotes(Canvas c) {
-        float right = platterRect.isEmpty() ? CONTENT_R * k : platterRect.right - SHELF_PAD * k;
-        applyTone();
-        Paint text = lQuote;
-        // The corner buttons' names appear in this row: the quotes fade out while one of them has focus.
-        float fade = 1;
-        for (int i = 3; i < topFocus.length; i++) fade = Math.min(fade, 1 - Ui.clamp(topFocus[i].value));
-        if (fade <= 0.01f) return;
-        int textColor = text.getColor();
-        text.setColor(Ui.alpha(textColor, fade));
-        // On the tab row, at the right.
-        float base = (L_TABBAR_TOP + L_TABBAR_H / 2) * k + Ui.halfCap(text);
-        float cap = Ui.cap(text), gap = 6 * k, spacing = 24 * k;
-        int n = HomeData.coinCount();
-        String[] values = new String[n];
-        float[] glyphs = new float[n];
-        float total = spacing * (n - 1);
-        for (int i = 0; i < n; i++) {
-            values[i] = HomeData.compact(data.prices[i]);
-            glyphs[i] = Glyphs.width(getContext(), HomeData.COINS[i], cap);
-            total += glyphs[i] + gap + text.measureText(values[i]);
-        }
-        float x = right - total;
-        for (int i = 0; i < n; i++) {
-            Glyphs.coin(getContext(), c, HomeData.COINS[i], x + glyphs[i] / 2, base - cap / 2, cap,
-                    Ui.alpha(tone(0xB38E8E93, 0x8CFFFFFF), fade));
-            x += glyphs[i] + gap;
-            c.drawText(values[i], x, base, text);
-            x += text.measureText(values[i]) + spacing;
-        }
-        text.setColor(textColor);
-        String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
-        if (!stale.isEmpty()) c.drawText(stale, right - total - 24 * k, base, staleQuote);
-    }
-
-    private void drawTiles(Canvas c) {
-        // The focused one last: it grows over its neighbors without being covered by them.
-        int top = -1;
-        float most = 0.02f;
-        for (int i = 0; i < shelf.size(); i++) {
-            if (tileFocus[i].value > most) {
-                most = tileFocus[i].value;
-                top = i;
-            }
-        }
-        for (int pass = 0; pass < 2; pass++) {
-            for (int i = 0; i < shelf.size(); i++) {
-                if ((pass == 0) == (i == top)) continue;
-                drawShelfTile(c, i);
-            }
-        }
-    }
-
-    /**
-     * App icon like the ones in the tvOS 27 Dock: the brand color edge to edge (a soft gradient) with the logo.
-     * Focused: it grows 20% from the center, with a deep shadow (it "rises" toward the viewer) and a subtle glow at the
-     * top. No border and no reflection, as Apple does it.
-     */
-    private void drawShelfTile(Canvas c, int i) {
-        HomeApps.Item it = shelf.get(i);
-        float f = tileFocus[i].value, fc = Ui.clamp(f), s = 1 + FOCUS_GROW * f;
-        RectF base = tileRects[i];
-        float bw = base.width(), bh = base.height(), r0 = TILE_RADIUS * k;
-        float cx = base.centerX(), cy = base.centerY();
-        cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
-        float r = r0 * s;
-        // Shadow at the resting icon size, enlarged by the transform (so the blur stays cached): short at rest, deep
-        // and lower when focused.
-        c.save();
-        c.translate(cx, cy);
-        c.scale(s, s);
-        tmp.set(-bw / 2, -bh / 2, bw / 2, bh / 2);
-        tmp.offset(0, (4 + 14 * f) * k);
-        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.3f) + tone(0.18f, 0.3f) * fc));
-        c.drawRoundRect(tmp, r0, r0, shadowDeep);
-        c.restore();
-        int[] style = TILE_STYLE.get(it.key);
-        if (it.logo != null && style != null) {
-            tileFill.setShader(new LinearGradient(0, cell.top, 0, cell.bottom, style[0], style[1], Shader.TileMode.CLAMP));
-            c.drawRoundRect(cell, r, r, tileFill);
-            tileFill.setShader(null);
-            if (fc > 0.01f) {
-                tileFill.setShader(new LinearGradient(0, cell.top, 0, cell.top + cell.height() * 0.5f,
-                        Ui.alpha(0xFFFFFFFF, 0.08f * fc), 0x00FFFFFF, Shader.TileMode.CLAMP));
-                c.drawRoundRect(cell, r, r, tileFill);
-                tileFill.setShader(null);
-            }
-            drawLogo(c, it, cell, s, style[2]);
-        } else if (it.logo != null) {
-            tileFill.setShader(null);
-            tileFill.setColor(0xFF161618);
-            c.drawRoundRect(cell, r, r, tileFill);
-            drawLogo(c, it, cell, s, 0);
+    private void drawLandscape(Canvas c, Landscape l, float alpha) {
+        image.setAlpha(Math.round(255 * alpha));
+        c.drawBitmap(l.image, null, screen, image);
+        image.setAlpha(255);
+        if (l.day()) {
+            scrim.setAlpha(Math.round(255 * alpha));
+            scrim.setShader(dayTop);
+            c.drawRect(0, 0, w, h * 0.26f, scrim);
+            scrim.setShader(dayBottom);
+            c.drawRect(0, h * 0.58f, w, h, scrim);
         } else {
+            scrim.setShader(topScrim);
+            scrim.setAlpha(Math.round(255 * alpha));
+            c.drawRect(screen, scrim);
+        }
+        scrim.setShader(null);
+        scrim.setAlpha(255);
+    }
+
+    private void drawBackdrop(Canvas c, float alpha) {
+        fill.setColor(Ui.alpha(0xFF08090B, alpha));
+        c.drawRect(screen, fill);
+        long up = SystemClock.uptimeMillis();
+        float fade = heroFadeAt == 0 ? 1 : Ui.clamp((up - heroFadeAt) / (float) FADE_MS);
+        if (heroFrom != null && fade < 1) drawHeroImage(c, heroFrom, alpha);
+        if (heroTo != null) drawHeroImage(c, heroTo, alpha * fade);
+        scrim.setAlpha(Math.round(255 * alpha));
+        scrim.setShader(heroLeft);
+        c.drawRect(screen, scrim);
+        scrim.setShader(heroBottom);
+        c.drawRect(screen, scrim);
+        scrim.setShader(heroTop);
+        c.drawRect(0, 0, w, h * 0.2f, scrim);
+        scrim.setShader(null);
+        scrim.setAlpha(255);
+    }
+
+    private void drawHeroImage(Canvas c, HomeArt.Hero hero, float alpha) {
+        Bitmap b = hero.image;
+        float scale = Math.max((float) w / b.getWidth(), (float) h / b.getHeight());
+        float bw = b.getWidth() * scale, bh = b.getHeight() * scale;
+        r.set((w - bw) / 2, (h - bh) / 2, (w + bw) / 2, (h + bh) / 2);
+        if (hero.soft) r.inset(-80 * k, -80 * k);
+        image.setAlpha(Math.round(255 * alpha));
+        c.drawBitmap(b, null, r, image);
+        image.setAlpha(255);
+        if (hero.soft) {
+            fill.setColor(Ui.alpha(0xFF000000, 0.4f * alpha));
+            c.drawRect(screen, fill);
+        }
+    }
+
+    // MARK: - Drawing: chrome (everything you focus)
+
+    private int restInk() {
+        return day() ? Look.DAY_INK : Look.INK;
+    }
+
+    /** Ink at the top of the screen: the look's ink at rest, white over content and search. */
+    private int topInk() {
+        return blend(restInk(), Look.INK, Ui.clamp(Math.max(contentT.value, searchT.value)));
+    }
+
+    private void drawChrome(Canvas c) {
+        float ct = Ui.clamp(contentT.value), st = Ui.clamp(searchT.value);
+        float restA = (1 - ct) * (1 - st), contentA = ct * (1 - st);
+        int ink = topInk();
+        drawClock(c, ink);
+        drawIcons(c, ink);
+        boolean setup = !Setup.hasKey();
+        if (!online && mode != SEARCH) {
+            drawOffline(c, restA);
+        } else if (setup && mode != SEARCH) {
+            drawSetup(c, restA);
+        } else {
+            drawPill(c, ct, st);
+            if (restA > 0.004f) drawChip(c, restA);
+        }
+        if (contentA > 0.004f) {
+            drawHero(c, contentA);
+            drawRow(c, contentA);
+        }
+        if (st > 0.004f) drawSearch(c, st);
+        float logosA = 1 - st;
+        if (logosA > 0.004f) drawLogos(c, logosA);
+    }
+
+    private void drawClock(Canvas c, int ink) {
+        clockP.setColor(ink);
+        float base = (60 + 40 * 0.96f) * k;
+        c.drawText(clockText, SAFE * k, base, clockP);
+        if (online && Setup.hasKey() && !weatherText.isEmpty()) {
+            weatherP.setColor(Ui.alpha(ink, 0.72f));
+            c.drawText(weatherText, SAFE * k + clockP.measureText(clockText) + 24 * k, base, weatherP);
+        }
+    }
+
+    private void iconRect(int i) {
+        float x = RIGHT - ICON - (2 - i) * (ICON + ICON_GAP);
+        r.set(x * k, ICONS_TOP * k, (x + ICON) * k, (ICONS_TOP + ICON) * k);
+    }
+
+    private void drawIcons(Canvas c, int ink) {
+        Path[] icons = {INPUTS_ICON, APPS_ICON, SETTINGS_ICON};
+        for (int i = 0; i < 3; i++) {
+            iconRect(i);
+            boolean on = overlayKind == OV_NONE && zone == Z_ICONS && iconIndex == i;
+            if (on) {
+                fill.setColor(ink);
+                c.drawOval(r, fill);
+            }
+            int color = on ? (day() && contentT.value < 0.5f && searchT.value < 0.5f ? Look.DAY_GROUND : Look.ON_INK) : Ui.alpha(ink, 0.78f);
+            drawIcon(c, icons[i], r.centerX(), r.centerY(), 26 * k, color, 1.8f, false);
+        }
+    }
+
+    /** A 24-unit line icon centered at (cx, cy), `size` px wide. */
+    private void drawIcon(Canvas c, Path icon, float cx, float cy, float size, int color, float width, boolean filled) {
+        c.save();
+        c.translate(cx - size / 2, cy - size / 2);
+        c.scale(size / 24f, size / 24f);
+        if (filled) {
+            fill.setColor(color);
+            c.drawPath(icon, fill);
+        } else {
+            stroke.setColor(color);
+            stroke.setStrokeWidth(width);
+            c.drawPath(icon, stroke);
+        }
+        c.restore();
+    }
+
+    private static void lerp(RectF out, RectF a, RectF b, float t) {
+        out.set(a.left + (b.left - a.left) * t, a.top + (b.top - a.top) * t, a.right + (b.right - a.right) * t,
+                a.bottom + (b.bottom - a.bottom) * t);
+    }
+
+    /** The search bar: large at rest, small at the top over content, the text field while searching. */
+    private void drawPill(Canvas c, float ct, float st) {
+        lerp(r2, PILL_REST, PILL_CONTENT, ct);
+        lerp(r, r2, PILL_SEARCH, st);
+        r.set(r.left * k, r.top * k, r.right * k, r.bottom * k);
+        float radius = r.height() / 2;
+        float restA = (1 - ct) * (1 - st);
+        boolean focused = overlayKind == OV_NONE && zone == Z_PILL;
+        boolean dayRest = day() && restA > 0.5f;
+        // Frosted at rest: the pre-blurred landscape under the bar.
+        if (restA > 0.004f && land != null && !dayRest) {
             clip.reset();
-            clip.addRoundRect(cell, r, r, Path.Direction.CW);
+            clip.addRoundRect(r, radius, radius, Path.Direction.CW);
             c.save();
             c.clipPath(clip);
-            if (it.tile != null) c.drawBitmap(it.tile, null, cell, bitmapPaint);
+            image.setAlpha(Math.round(255 * restA));
+            c.drawBitmap(land.blurred, null, screen, image);
+            image.setAlpha(255);
             c.restore();
         }
-    }
-
-    /**
-     * Logo at its "optical" size (all with the same amount of ink, plus each one's own adjustment, never past 80% × 62%
-     * of the tile), centered and already filtered down to the focused tile size: when focused it is drawn pixel for
-     * pixel, without resampling.
-     */
-    private void drawLogo(Canvas c, HomeApps.Item it, RectF box, float s, int mode) {
-        Bitmap logo = crispLogo(it, mode == 2 && it.logoDark != null);
-        if (logo == null) return;
-        float scale = s / (1 + FOCUS_GROW);
-        float dw = logo.getWidth() * scale, dh = logo.getHeight() * scale;
-        float left = box.centerX() - dw / 2, top = box.centerY() - dh / 2;
-        if (scale > 0.998f) {
-            left = Math.round(left);
-            top = Math.round(top);
+        int restFill = dayRest ? (focused ? 0xFFFFFFFF : 0x66FFFFFF) : 0x29FFFFFF;
+        int fillColor = blend(blend(restFill, 0x5C141416, ct), 0x1FFFFFFF, st);
+        fill.setColor(fillColor);
+        c.drawRoundRect(r, radius, radius, fill);
+        stroke.setStrokeWidth(Math.max(1, k));
+        stroke.setColor(dayRest ? 0x99FFFFFF : Ui.alpha(0xFFFFFFFF, 0.14f + 0.06f * (1 - ct)));
+        c.drawRoundRect(r, radius, radius, stroke);
+        int ink = blend(restInk(), Look.INK, Math.max(ct, st));
+        if (focused) {
+            float gap = (dayRest ? 0 : 4) * k, width = (dayRest ? 3 : 3) * k;
+            stroke.setStrokeWidth(width);
+            stroke.setColor(ink);
+            r2.set(r);
+            r2.inset(-gap - width / 2, -gap - width / 2);
+            c.drawRoundRect(r2, radius + gap + width / 2, radius + gap + width / 2, stroke);
         }
-        tmp.set(left, top, left + dw, top + dh);
-        bitmapPaint.setColorFilter(mode == 1 ? whiteLogo : null);
-        c.drawBitmap(logo, null, tmp, bitmapPaint);
-        bitmapPaint.setColorFilter(null);
-    }
-
-    private Bitmap crispLogo(HomeApps.Item it, boolean dark) {
-        Bitmap src = dark ? it.logoDark : it.logo;
-        if (tileRects.length == 0) return src;
-        String key = it.key + "@" + System.identityHashCode(src) + "@" + Math.round(tileRects[0].width());
-        Bitmap cached = crispLogos.get(key);
-        if (cached != null) return cached;
-        float bw = tileRects[0].width() * (1 + FOCUS_GROW), bh = tileRects[0].height() * (1 + FOCUS_GROW);
-        float lw = src.getWidth(), lh = src.getHeight();
-        float scale = (float) Math.sqrt(bw * bh * 0.085f / (lw * lh * Math.max(0.08f, it.logoInk))) * it.logoScale;
-        scale = Math.min(scale, Math.min(bw * 0.76f / lw, bh * 0.58f / lh));
-        Bitmap out = downscale(src, Math.round(lw * scale), Math.round(lh * scale));
-        crispLogos.put(key, out);
-        return out;
-    }
-
-    /** Halves the size while it can (a 2×2 average, no aliasing), then finishes at the exact size. */
-    private static Bitmap downscale(Bitmap src, int w, int h) {
-        w = Math.max(1, w);
-        h = Math.max(1, h);
-        Bitmap b = src;
-        while (b.getWidth() / 2 >= w && b.getHeight() / 2 >= h) {
-            Bitmap half = Bitmap.createScaledBitmap(b, b.getWidth() / 2, b.getHeight() / 2, true);
-            if (b != src) b.recycle();
-            b = half;
+        float pad = (34 + (22 - 34) * ct + (32 - 34) * st) * k;
+        float iconSize = (34 + (24 - 34) * ct + (32 - 34) * st) * k;
+        drawIcon(c, SEARCH_ICON, r.left + pad + iconSize / 2, r.centerY(), iconSize, Ui.alpha(ink, 0.85f), 1.9f, false);
+        float textX = r.left + pad + iconSize + 20 * k;
+        float micA = voice ? Math.max(restA, st) : 0;
+        if (micA > 0.01f) drawIcon(c, MIC_ICON, r.right - pad - iconSize / 2, r.centerY(), iconSize, Ui.alpha(ink, 0.85f * micA), 1.8f, false);
+        if (restA > 0.004f) {
+            pillP.setColor(Ui.alpha(ink, (dayRest ? 0.74f : 0.8f) * restA));
+            c.drawText(Ui.tr("Busque filmes, séries e apps", "Search movies, shows and apps"), textX, r.centerY() + Ui.halfCap(pillP), pillP);
         }
-        Bitmap out = Bitmap.createScaledBitmap(b, w, h, true);
-        if (b != src && b != out) b.recycle();
-        return out;
-    }
-
-    // MARK: - Bottom drawer
-
-    private static List<HomeApps.Item> drawerList(Context c) {
-        List<HomeApps.Item> list = HomeApps.allInputs(c);
-        list.addAll(HomeApps.drawerShortcuts());
-        return list;
-    }
-
-    private void setDrawerItems(List<HomeApps.Item> list) {
-        int inputs = 0;
-        while (inputs < list.size() && (list.get(inputs).kind == HomeApps.INPUT || list.get(inputs).kind == HomeApps.LIVE_TV)) inputs++;
-        boolean same = list.size() == drawerItems.size();
-        for (int i = 0; same && i < list.size(); i++) {
-            same = list.get(i).key.equals(drawerItems.get(i).key) && list.get(i).connected == drawerItems.get(i).connected;
+        float contentLabel = ct * (1 - st);
+        if (contentLabel > 0.004f) {
+            pillSmallP.setColor(Ui.alpha(ink, 0.8f * contentLabel));
+            c.drawText(Ui.tr("Buscar", "Search"), textX, r.centerY() + Ui.halfCap(pillSmallP), pillSmallP);
         }
-        drawerItems = list;
-        drawerInputs = inputs;
-        if (drawerFocus.length != list.size()) {
-            drawerFocus = new Spring[list.size()];
-            drawerRects = new RectF[list.size()];
-            for (int i = 0; i < drawerFocus.length; i++) {
-                drawerFocus[i] = new Spring(0.28f, 0.85f, 0);
-                drawerRects[i] = new RectF();
-            }
-            drawerIndex = Math.min(drawerIndex, Math.max(0, list.size() - 1));
-            retarget(true);
-        }
-        layoutDrawer();
-        if (!same) drawerDirty = true;
-    }
-
-    private void layoutDrawer() {
-        int n = drawerItems.size();
-        float left = MARGIN * k, right = CONTENT_R * k;
-        float gap = 18 * k, groupGap = 56 * k;
-        int groups = drawerInputs > 0 && drawerInputs < n ? 2 : 1;
-        float tw = Math.min(230 * k, (right - left - Math.max(0, n - groups) * gap - (groups - 1) * groupGap) / Math.max(1, n));
-        float x = left, top = ROW_TOP * k;
-        for (int i = 0; i < n; i++) {
-            if (i == drawerInputs && i > 0) x += groupGap - gap;
-            drawerRects[i].set(x, top, x + tw, top + ROW_H * k);
-            x += tw + gap;
-        }
-        float cardsTop = CARDS_TOP * k, split = left + (right - left) * 0.585f;
-        weatherCard.set(left, cardsTop, split - 16 * k, cardsTop + CARDS_H * k);
-        quotesCard.set(split + 16 * k, cardsTop, right, cardsTop + CARDS_H * k);
-        drawerDirty = true;
-    }
-
-    private void openDrawer() {
-        if (drawerItems.isEmpty()) return;
-        drawerOpen = true;
-        drawer.target = 1;
-        zone = Z_DRAWER;
-        drawerIndex = shelf.isEmpty() ? 0 : nearest(drawerRects, tileRects[shelfIndex].centerX());
-        for (int i = 0; i < drawerFocus.length; i++) drawerFocus[i].snap(i == drawerIndex ? 1 : 0);
-        drawerDirty = true;
-    }
-
-    private void closeDrawer() {
-        drawerOpen = false;
-        drawer.target = 0;
-        zone = Z_SHELF;
-        for (Spring f : drawerFocus) f.snap(0);   // the drawer goes away: its focus doesn't need to animate
-        if (!shelf.isEmpty() && drawerIndex < drawerRects.length) shelfIndex = nearest(tileRects, drawerRects[drawerIndex].centerX());
-    }
-
-    /** Color for the drawer's text and symbols: dark by day, white at night. */
-    private int drawerInk(float alpha) {
-        return Ui.alpha(tone(L_INK, 0xFFFFFFFF), alpha);
-    }
-
-    /** Glass for a drawer card or button: white by day, smoked at night (both during the transition). */
-    private void drawerGlass(Canvas c, RectF r, float radius, float lightTint, int shadowColor, float drop) {
-        float dk = dark();
-        if (dk < 0.999f) {
-            tmp.set(r);
-            tmp.offset(0, drop);
-            shadow.setColor(Ui.alpha(shadowColor, 1 - dk));
-            c.drawRoundRect(tmp, radius, radius, shadow);
-            scene.glass(c, r, radius, 0xFFFFFFFF, lightTint, 0, 0, 0.02f, 1, 1 - dk);
-        }
-        if (dk > 0.001f) scene.glass(c, r, radius, SMOKE, 0.4f, 0, 0, 0.02f, 1, dk);
-    }
-
-    private void drawerCard(Canvas c, RectF r) {
-        drawerGlass(c, r, 30 * k, 0.72f, 0x1A000000, 10 * k);
-    }
-
-    private void drawDrawer(Canvas c) {
-        if (drawerItems.isEmpty()) return;
-        rowTitle.setColor(tone(L_DIM, 0xB3FFFFFF));
-        cardTitle.setColor(tone(L_DIM, 0xB3FFFFFF));
-        cardText.setColor(drawerInk(0.95f));
-        cardDim.setColor(tone(L_DIM, 0xADFFFFFF));
-        cardDimRight.setColor(tone(L_FAINT, 0x99FFFFFF));
-        bigTemp.setColor(drawerInk(1));
-        hourPaint.setColor(tone(L_DIM, 0xADFFFFFF));
-        hourTemp.setColor(drawerInk(0.95f));
-        pricePaint.setColor(drawerInk(0.95f));
-        float titleBase = ROW_TITLE * k;
-        if (drawerInputs > 0) c.drawText(Ui.tr("Entradas", "Inputs"), drawerRects[0].left + 4 * k, titleBase, rowTitle);
-        if (drawerInputs < drawerItems.size()) c.drawText(Ui.tr("Atalhos", "Shortcuts"), drawerRects[drawerInputs].left + 4 * k, titleBase, rowTitle);
-        int top = -1;
-        for (int i = 0; i < drawerItems.size(); i++) if (drawerFocus[i].value > 0.02f && (top < 0 || drawerFocus[i].value > drawerFocus[top].value)) top = i;
-        for (int i = 0; i < drawerItems.size(); i++) if (i != top) drawDrawerTile(c, i);
-        if (top >= 0) drawDrawerTile(c, top);
-        drawWeatherCard(c, weatherCard);
-        drawQuotesCard(c, quotesCard);
-    }
-
-    /** Square drawer button: symbol and name; an input with no device is dimmed. Focused: white, with dark text. */
-    private void drawDrawerTile(Canvas c, int i) {
-        HomeApps.Item it = drawerItems.get(i);
-        float f = Ui.clamp(drawerFocus[i].value), s = 1 + 0.07f * f;
-        RectF base = drawerRects[i];
-        float cx = base.centerX(), cy = base.centerY();
-        cell.set(cx - base.width() * s / 2, cy - base.height() * s / 2, cx + base.width() * s / 2, cy + base.height() * s / 2);
-        float r = 20 * k * s;
-        if (f > 0.01f) {
-            tmp.set(cell);
-            tmp.offset(0, 12 * k * f);
-            shadow.setColor(Ui.alpha(0xFF000000, 0.45f * f));
-            c.drawRoundRect(tmp, r, r, shadow);
-        }
-        if (f < 0.99f) drawerGlass(c, cell, r, 0.7f, 0x14000000, 6 * k);
-        if (f > 0.01f) {
-            fill.setShader(null);
-            fill.setColor(Ui.alpha(WHITE, f));
-            c.drawRoundRect(cell, r, r, fill);
-        }
-        boolean off = it.kind == HomeApps.INPUT && !it.connected;
-        int ink = blend(tone(off ? 0xFF8E8E93 : L_INK, off ? 0x6BFFFFFF : 0xF2FFFFFF), INK, f);
-        Symbols.draw(getContext(), c, it.symbol, cx, cell.top + cell.height() * 0.4f, 34 * k * s, ink);
-        drawerLabel.setColor(ink);
-        drawerLabel.setTextSize(23 * k * s);
-        float room = cell.width() - 16 * k, wide = drawerLabel.measureText(it.label);
-        // A long name ("Home Settings", an input you renamed) shrinks a little before it gets cut.
-        if (wide > room) drawerLabel.setTextSize(Math.max(18 * k * s, 23 * k * s * room / wide));
-        String label = TextUtils.ellipsize(it.label, new TextPaint(drawerLabel), room, TextUtils.TruncateAt.END).toString();
-        c.drawText(label, cx, cell.top + cell.height() * 0.8f, drawerLabel);
-        drawerLabel.setTextSize(23 * k);
-    }
-
-    /** Weather for your location: now (large), the next 6 hours, and sunrise and sunset. */
-    private void drawWeatherCard(Canvas c, RectF r) {
-        drawerCard(c, r);
-        float x = r.left + 34 * k;
-        c.drawText(Setup.city().isEmpty() ? Ui.tr("Clima", "Weather") : Setup.city(), x, r.top + 54 * k, cardTitle);
-        HomeData.Weather wx = data.weather;
-        if (Double.isNaN(wx.temp)) {
-            c.drawText(Ui.tr("Sem dados do clima agora.", "No weather data right now."), x, r.top + 120 * k, cardDim);
-            return;
-        }
-        String symbol = Symbols.weather(wx.code, wx.isDay);
-        float sw = Symbols.width(getContext(), symbol, 52 * k);
-        Symbols.draw(getContext(), c, symbol, x + sw / 2, r.top + 132 * k, 52 * k, drawerInk(0.95f));
-        String now = HomeData.degrees(wx.temp);
-        c.drawText(now, x + sw + 18 * k - Ui.leftBearing(bigTemp, now), r.top + 170 * k, bigTemp);
-        c.drawText(HomeData.condition(wx.code, wx.isDay), x, r.top + 220 * k, cardText);
-        c.drawText(Ui.en ? "H:" + HomeData.degrees(wx.max) + "   L:" + HomeData.degrees(wx.min)
-                : "Máx. " + HomeData.degrees(wx.max) + "   Mín. " + HomeData.degrees(wx.min), x, r.top + 258 * k, cardDim);
-        float split = r.left + 392 * k;
-        fill.setShader(null);
-        fill.setColor(tone(0x1A000000, 0x24FFFFFF));
-        c.drawRoundRect(split - k, r.top + 34 * k, split + k, r.bottom - 34 * k, k, k, fill);
-        float hx = split + 30 * k, hw = (r.right - 30 * k - hx) / 6;
-        for (int i = 0; i < wx.hours.size() && i < 6; i++) {
-            float hc = hx + hw * (i + 0.5f);
-            c.drawText(HomeData.hour(wx.hours.get(i)), hc, r.top + 96 * k, hourPaint);
-            Symbols.draw(getContext(), c, Symbols.weather(wx.hourCode.get(i), wx.hourDay.get(i)), hc, r.top + 142 * k, 30 * k, drawerInk(0.9f));
-            c.drawText(HomeData.degrees(wx.hourTemp.get(i)), hc, r.top + 196 * k, hourTemp);
-        }
-        float sx = hx, base = r.top + 258 * k;
-        if (wx.sunrise != 0) sx = sunItem(c, "sunrise", Ui.tr("Nascer ", "Sunrise ") + Ui.time(wx.sunrise), sx, base) + 36 * k;
-        if (wx.sunset != 0) sunItem(c, "sunset", Ui.tr("Pôr do sol ", "Sunset ") + Ui.time(wx.sunset), sx, base);
-    }
-
-    private float sunItem(Canvas c, String symbol, String label, float x, float base) {
-        float size = 22 * k, sw = Symbols.width(getContext(), symbol, size);
-        Symbols.draw(getContext(), c, symbol, x + sw / 2, base - Ui.halfCap(cardDim), size, tone(L_DIM, 0xB3FFFFFF));
-        c.drawText(label, x + sw + 10 * k, base, cardDim);
-        return x + sw + 10 * k + cardDim.measureText(label);
-    }
-
-    /** Prices in the configured currency with the 24 h change (green/red, like Apple's Stocks app). */
-    private void drawQuotesCard(Canvas c, RectF r) {
-        drawerCard(c, r);
-        float x = r.left + 34 * k, right = r.right - 34 * k;
-        c.drawText(Ui.tr("Cotações", "Crypto"), x, r.top + 54 * k, cardTitle);
-        String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
-        c.drawText(stale.isEmpty() ? Ui.tr("variação em 24 h", "24h change") : Ui.tr("de ", "") + stale, right, r.top + 54 * k, cardDimRight);
-        float cap = Ui.cap(cardText);
-        for (int i = 0; i < HomeData.coinCount(); i++) {
-            float base = r.top + (110 + 52 * i) * k, mid = base - cap / 2;
-            float gw = Glyphs.width(getContext(), HomeData.COINS[i], cap);
-            Glyphs.coin(getContext(), c, HomeData.COINS[i], x + 14 * k, mid, cap, tone(L_DIM, 0xCCFFFFFF));
-            c.drawText(HomeData.COIN_NAMES[i], x + Math.max(gw, 28 * k) / 2 + 30 * k, base, cardText);
-            c.drawText(HomeData.brl(data.prices[i]), right - 128 * k, base, pricePaint);
-            double change = data.changes[i];
-            if (Double.isNaN(change)) continue;
-            int color = change >= 0 ? tone(0xFF248A3D, UP_COLOR) : tone(0xFFD70015, DOWN_COLOR);
-            tmp.set(right - 108 * k, mid - 17 * k, right, mid + 17 * k);
-            fill.setShader(null);
-            fill.setColor(Ui.alpha(color, 0.2f));
-            c.drawRoundRect(tmp, 17 * k, 17 * k, fill);
-            changePaint.setColor(color);
-            c.drawText(HomeData.change(change), tmp.centerX(), mid + Ui.halfCap(changePaint), changePaint);
-        }
-    }
-
-    // MARK: - Focus
-
-    /** Sets the springs' targets from the current focus (snap: no animation). */
-    private void retarget(boolean snap) {
-        wakeFrames();
-        // Only the group whose focus changed is redrawn (moving along the shelf doesn't redraw the hero or capsule).
-        boolean tilesChanged = aim(tileFocus, !sheetOpen && zone == Z_SHELF ? shelfIndex : -1, snap);
-        boolean statusChanged = aim(statusFocus, !sheetOpen && zone == Z_STATUS ? statusIndex : -1, snap);
-        boolean drawerChanged = aim(drawerFocus, !sheetOpen && zone == Z_DRAWER ? drawerIndex : -1, snap);
-        boolean heroChanged = heroFocus.target != (!sheetOpen && zone == Z_HERO ? 1 : 0);
-        heroFocus.target = !sheetOpen && zone == Z_HERO ? 1 : 0;
-        if (snap) heroFocus.snap(heroFocus.target);
-        boolean topChanged = aim(topFocus, !sheetOpen && zone == Z_TOP ? topIndex : -1, snap);
-        heroChanged |= aim(cardFocus, !sheetOpen && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
-        statusChanged |= topChanged;
-        tilesDirty |= snap || tilesChanged;
-        statusDirty |= snap || statusChanged;
-        heroDirty |= snap || heroChanged;
-        drawerDirty |= snap || drawerChanged;
-    }
-
-    /** Aims a group's springs (only `focused` at 1); returns true if any target changed. */
-    private static boolean aim(Spring[] springs, int focused, boolean snap) {
-        boolean changed = false;
-        for (int i = 0; i < springs.length; i++) {
-            float target = i == focused ? 1 : 0;
-            changed |= springs[i].target != target;
-            springs[i].target = target;
-            if (snap) springs[i].snap(target);
-        }
-        return changed;
-    }
-
-    // MARK: - "All Apps" sheet
-
-    private void setOthers(List<HomeApps.Item> list) {
-        others = list;
-        gridFocus = new Spring[list.size()];
-        for (int i = 0; i < gridFocus.length; i++) gridFocus[i] = new Spring(0.3f, 0.82f, 0);
-        gridLabels = null;
-        gridIndex = Math.min(gridIndex, Math.max(0, list.size() - 1));
-        retargetGrid(true);
-        gridDirty = true;
-    }
-
-    private void openSheet() {
-        sheetOpen = true;
-        gridIndex = 0;
-        scroll.snap(0);
-        retargetGrid(true);
-        retarget(false);
-        sheet.target = 1;
-        gridDirty = true;
-    }
-
-    private void closeSheet() {
-        sheetOpen = false;
-        sheet.target = 0;
-        retarget(false);
-    }
-
-    private void retargetGrid(boolean snap) {
-        for (int i = 0; i < gridFocus.length; i++) {
-            gridFocus[i].target = sheetOpen && i == gridIndex ? 1 : 0;
-            if (snap) gridFocus[i].snap(gridFocus[i].target);
-        }
-        int rows = Math.max(1, (others.size() + COLUMNS - 1) / COLUMNS);
-        int visible = Math.min(rows, VISIBLE_ROWS);
-        int r = gridIndex / COLUMNS;
-        float target = scroll.target;
-        if (r < target) target = r;
-        else if (r > target + visible - 1) target = r - visible + 1;
-        scroll.target = Math.max(0, Math.min(rows - visible, target));
-        if (snap) scroll.snap(scroll.target);
-    }
-
-    private void drawSheet(Canvas c) {
-        c.drawColor(0xA8000000);
-        float shift = scroll.value * GRID_ROW * k;
-        c.drawText(Ui.tr("Todos os Apps", "All Apps"), w / 2f, 124 * k - shift, sheetTitle);
-        int n = others.size();
-        if (gridLabels == null || gridLabels.length != n) {
-            gridLabels = new String[n];
-            for (int i = 0; i < n; i++) {
-                gridLabels[i] = TextUtils.ellipsize(others.get(i).label, gridLabel, (GRID_W - 10) * k, TextUtils.TruncateAt.END).toString();
+        if (st > 0.004f) {
+            float room = r.right - pad - (voice ? iconSize + 20 * k : 0) - textX;
+            if (query.isEmpty()) {
+                pillP.setTextSize(40 * k);
+                pillP.setColor(Ui.alpha(Look.INK, 0.5f * st));
+                c.drawText(Ui.tr("Filmes, séries e apps", "Movies, shows and apps"), textX, r.centerY() + Ui.halfCap(pillP), pillP);
+                pillP.setTextSize(34 * k);
+            } else {
+                queryP.setColor(Ui.alpha(Look.INK, st));
+                float qw = queryP.measureText(query);
+                c.save();
+                c.clipRect(textX, r.top, textX + room, r.bottom);
+                float x = qw > room ? textX + room - qw : textX;
+                c.drawText(query, x, r.centerY() + Ui.halfCap(queryP), queryP);
+                c.restore();
+                fill.setColor(Ui.alpha(Look.INK, 0.9f * st));
+                float cx = Math.min(textX + qw, textX + room) + 4 * k;
+                c.drawRect(cx, r.centerY() - 22 * k, cx + 2.5f * k, r.centerY() + 22 * k, fill);
             }
         }
-        float gridWidth = COLUMNS * GRID_W + (COLUMNS - 1) * GRID_GAP;
-        float left = (1920 - gridWidth) / 2 * k;
-        float gridTop = GRID_TOP * k;
-        for (int i = 0; i < n; i++) {
-            int r = i / COLUMNS, col = i % COLUMNS;
-            float y = gridTop + r * GRID_ROW * k - shift;
-            if (y > h || y + GRID_ROW * k < 0) continue;
-            float x = left + col * (GRID_W + GRID_GAP) * k;
-            RectF base = new RectF(x, y, x + GRID_W * k, y + GRID_H * k);
-            float f = gridFocus[i].value;
-            drawCard(c, others.get(i).tile, base, GRID_RADIUS * k, f, 0.08f);
-            if (sheetOpen && i == gridIndex) focusedCell.set(cell);
-            gridLabel.setColor(blend(0x99FFFFFF, 0xFFFFFFFF, Ui.clamp(f)));
-            c.drawText(gridLabels[i], base.centerX(), base.bottom + (40 + 6 * f) * k, gridLabel);
-        }
     }
 
-    /** 16:9 sheet card. Focused (the shelf's subtle focus): it grows, with a shadow, a soft sheen and a thin border. */
-    private void drawCard(Canvas c, Bitmap image, RectF base, float radius, float f, float grow) {
-        float s = 1 + grow * f;
-        float cx = base.centerX(), cy = base.centerY();
-        cell.set(cx - base.width() * s / 2, cy - base.height() * s / 2, cx + base.width() * s / 2, cy + base.height() * s / 2);
-        float r = radius * s;
-        float fc = Ui.clamp(f);
-        if (f > 0.01f) {
-            tmp.set(cell);
-            tmp.offset(0, 16 * k * f);
-            shadow.setColor(Ui.alpha(0xFF000000, 0.55f * fc));
-            c.drawRoundRect(tmp, r, r, shadow);
+    /** "Resume The Big Bang Theory · S10 E2 · 17 min left", centered under the search bar. */
+    private void drawChip(Canvas c, float alpha) {
+        ContinueWatching.Entry e = chipEntry();
+        if (e == null) return;
+        boolean dayLook = day();
+        boolean focused = overlayKind == OV_NONE && zone == Z_CHIP;
+        int ink = restInk();
+        String lead = Ui.tr("Continuar", "Resume"), rest = chipRest(e);
+        float textW = chipP.measureText(lead) + 10 * k + chipStrongP.measureText(e.title) + 10 * k + chipP.measureText(rest);
+        float width = 8 * k + 100 * k + 18 * k + textW + 28 * k;
+        float left = (w - width) / 2, top = CHIP_TOP * k;
+        r.set(left, top, left + width, top + CHIP_H * k);
+        float radius = r.height() / 2;
+        if (focused) {
+            fill.setColor(Ui.alpha(ink, alpha));
+        } else {
+            fill.setColor(Ui.alpha(dayLook ? 0x66FFFFFF : 0x52141010, alpha));
         }
+        c.drawRoundRect(r, radius, radius, fill);
+        if (!focused) {
+            stroke.setStrokeWidth(Math.max(1, k));
+            stroke.setColor(Ui.alpha(dayLook ? 0x99FFFFFF : 0x1FFFFFFF, alpha));
+            c.drawRoundRect(r, radius, radius, stroke);
+        }
+        // Thumbnail with progress.
+        r2.set(r.left + 8 * k, r.top + 8 * k, r.left + 108 * k, r.top + 64 * k);
+        Bitmap thumb = row.isEmpty() || row.get(0).entry != e ? null : art.card(row.get(0).key, row.get(0).source);
         clip.reset();
-        clip.addRoundRect(cell, r, r, Path.Direction.CW);
+        clip.addRoundRect(r2, 28 * k, 28 * k, Path.Direction.CW);
         c.save();
         c.clipPath(clip);
-        if (image != null) c.drawBitmap(image, null, cell, bitmapPaint);
-        if (f > 0.01f) {
-            sheen.setShader(new LinearGradient(0, cell.top, 0, cell.top + cell.height() * 0.5f,
-                    Ui.alpha(0xFFFFFFFF, 0.1f * fc), 0x00FFFFFF, Shader.TileMode.CLAMP));
-            c.drawRect(cell, sheen);
+        if (thumb != null) {
+            image.setAlpha(Math.round(255 * alpha));
+            c.drawBitmap(thumb, null, r2, image);
+            image.setAlpha(255);
+        } else {
+            fill.setColor(Ui.alpha(Look.FALLBACK_TOP, alpha));
+            c.drawRect(r2, fill);
         }
-        if (fc < 0.99f) {
-            veil.setColor(Ui.alpha(0xFF000000, 0.08f * (1 - fc)));
-            c.drawRect(cell, veil);
+        if (e.duration > 0) {
+            float p = Math.min(1, (float) e.position / e.duration);
+            fill.setColor(Ui.alpha(0x4DFFFFFF, alpha));
+            c.drawRect(r2.left, r2.bottom - 4 * k, r2.right, r2.bottom, fill);
+            fill.setColor(Ui.alpha(Look.INK, alpha));
+            c.drawRect(r2.left, r2.bottom - 4 * k, r2.left + r2.width() * p, r2.bottom, fill);
         }
         c.restore();
-        border.setColor(0x14FFFFFF);
-        c.drawRoundRect(cell, r, r, border);
-        if (f > 0.01f) {
-            rim.setShader(null);
-            rim.setColor(Ui.alpha(0xFFFFFFFF, 0.4f * fc));
-            rim.setStrokeWidth(1.5f * k);
-            c.drawRoundRect(cell, r, r, rim);
-            rim.setStrokeWidth(2.5f * k);
+        int strong = focused ? (dayLook ? Look.DAY_GROUND : Look.ON_INK) : ink;
+        float x = r2.right + 18 * k, base = r.centerY() + Ui.halfCap(chipP);
+        chipP.setColor(Ui.alpha(strong, (focused ? 0.8f : 0.66f) * alpha));
+        c.drawText(lead, x, base, chipP);
+        x += chipP.measureText(lead) + 10 * k;
+        chipStrongP.setColor(Ui.alpha(strong, alpha));
+        c.drawText(e.title, x, base, chipStrongP);
+        x += chipStrongP.measureText(e.title) + 10 * k;
+        c.drawText(rest, x, base, chipP);
+    }
+
+    private static String chipRest(ContinueWatching.Entry e) {
+        String code = e.episode > 0 ? "S" + e.season + " E" + e.episode : "";
+        long left = e.duration > e.position ? (e.duration - e.position + 59_999) / 60_000 : 0;
+        String s = join(code, left > 0 ? left + Ui.tr(" min restantes", " min left") : "");
+        return s.isEmpty() ? "" : "· " + s;
+    }
+
+    /** No TMDB key yet: apps work; a card offers setup from the phone or on the TV (HomeNoKey). */
+    private void drawSetup(Canvas c, float alpha) {
+        if (alpha <= 0.004f) return;
+        String title = Ui.tr("Conclua a configuração para buscar filmes e séries", "Finish setup to search movies and shows");
+        String line1 = Ui.tr("Use o celular para adicionar sua chave TMDB e a cidade.", "Scan with your phone to add your TMDB key and city.");
+        String line2 = Ui.tr("Seus apps já funcionam.", "Your apps already work.");
+        Bitmap qr = setupQr();
+        String button = qr == null ? Ui.tr("Configurar nesta TV", "Set up on this TV") : Ui.tr("Configurar nesta TV", "Set up on this TV instead");
+        float textW = Math.max(setupTitleP.measureText(title), Math.max(setupBodyP.measureText(line1), setupBodyP.measureText(line2)));
+        float qrSize = qr == null ? 0 : 330 * k;
+        float width = 20 * k + qrSize + (qr == null ? 36 * k : 56 * k) + textW + 56 * k;
+        float height = 370 * k;
+        float left = (w - width) / 2, top = 310 * k;
+        r.set(left, top, left + width, top + height);
+        fill.setColor(Ui.alpha(0xCC121214, alpha));
+        c.drawRoundRect(r, 36 * k, 36 * k, fill);
+        stroke.setStrokeWidth(Math.max(1, k));
+        stroke.setColor(Ui.alpha(0x1AFFFFFF, alpha));
+        c.drawRoundRect(r, 36 * k, 36 * k, stroke);
+        float x = left + 20 * k;
+        if (qr != null) {
+            r2.set(x, top + 20 * k, x + qrSize, top + 20 * k + qrSize);
+            fill.setColor(Ui.alpha(Look.INK, alpha));
+            c.drawRoundRect(r2, 16 * k, 16 * k, fill);
+            r2.inset(20 * k, 20 * k);
+            image.setFilterBitmap(false);
+            image.setAlpha(Math.round(255 * alpha));
+            c.drawBitmap(qr, null, r2, image);
+            image.setAlpha(255);
+            image.setFilterBitmap(true);
+            x += qrSize + 56 * k;
+        } else {
+            x += 36 * k;
+        }
+        float y = top + 92 * k;
+        setupTitleP.setColor(Ui.alpha(Look.INK, alpha));
+        c.drawText(title, x, y, setupTitleP);
+        setupBodyP.setColor(Ui.alpha(Look.INK, 0.72f * alpha));
+        c.drawText(line1, x, y + 58 * k, setupBodyP);
+        c.drawText(line2, x, y + 96 * k, setupBodyP);
+        boolean focused = overlayKind == OV_NONE && zone == Z_SETUP;
+        float bw = setupButtonP.measureText(button) + 72 * k;
+        r2.set(x, y + 140 * k, x + bw, y + 212 * k);
+        fill.setColor(Ui.alpha(focused ? Look.INK : 0x24FFFFFF, alpha));
+        c.drawRoundRect(r2, r2.height() / 2, r2.height() / 2, fill);
+        setupButtonP.setColor(Ui.alpha(focused ? Look.ON_INK : Look.INK, alpha));
+        c.drawText(button, r2.left + 36 * k, r2.centerY() + Ui.halfCap(setupButtonP), setupButtonP);
+    }
+
+    /** The phone setup page's QR code (PhoneLink), or null when the phone link isn't available. */
+    private Bitmap setupQr() {
+        return null;
+    }
+
+    /** Offline: the bar says so and the apps keep working (HomeOffline). */
+    private void drawOffline(Canvas c, float alpha) {
+        if (alpha <= 0.004f) return;
+        r.set(PILL_REST.left * k, PILL_REST.top * k, PILL_REST.right * k, PILL_REST.bottom * k);
+        float radius = r.height() / 2;
+        fill.setColor(Ui.alpha(0x5C141110, alpha));
+        c.drawRoundRect(r, radius, radius, fill);
+        stroke.setStrokeWidth(Math.max(1, k));
+        stroke.setColor(Ui.alpha(0x24FFFFFF, alpha));
+        c.drawRoundRect(r, radius, radius, stroke);
+        drawIcon(c, OFFLINE_ICON, r.left + 34 * k + 17 * k, r.centerY(), 34 * k, Ui.alpha(Look.INK, 0.7f * alpha), 1.8f, false);
+        offlineP.setColor(Ui.alpha(Look.INK, 0.7f * alpha));
+        c.drawText(Ui.tr("Sem conexão com a internet", "No internet connection"), r.left + 88 * k, r.centerY() + Ui.halfCap(offlineP), offlineP);
+        offlineLineP.setColor(Ui.alpha(Look.INK, alpha));
+        c.drawText(Ui.tr("Os apps desta TV continuam abrindo. A busca e as sugestões voltam quando a internet voltar.",
+                "Apps on this TV still open. Search and picks come back when you’re online."), w / 2f, (532 + 26) * k, offlineLineP);
+    }
+
+    // MARK: - Drawing: content (hero and row)
+
+    private Card focusedCard() {
+        return row.isEmpty() ? null : row.get(Math.min(rowIndex, row.size() - 1));
+    }
+
+    private void drawHero(Canvas c, float alpha) {
+        Card card = focusedCard();
+        if (card == null) return;
+        float x = SAFE * k, y = HERO_TOP * k;
+        kickerP.setColor(Ui.alpha(Look.INK, 0.72f * alpha));
+        c.drawText(card.kicker, x, y + 24 * 0.96f * k, kickerP);
+        if (heroTitleFor != card) {
+            heroTitleFor = card;
+            heroTitleFit = TextUtils.ellipsize(card.title, heroTitleP, 1280 * k, TextUtils.TruncateAt.END).toString();
+        }
+        heroTitleP.setColor(Ui.alpha(Look.INK, alpha));
+        float titleTop = y + 29 * k + 12 * k;
+        c.drawText(heroTitleFit, x - Ui.leftBearing(heroTitleP, heroTitleFit), titleTop + 84 * 0.78f * k, heroTitleP);
+        float metaY = titleTop + 84 * k + 22 * k + 16 * k;
+        float mx = x;
+        metaP.setColor(Ui.alpha(Look.INK, 0.8f * alpha));
+        if (!card.meta.isEmpty()) {
+            c.drawText(card.meta, mx, metaY + Ui.halfCap(metaP), metaP);
+            mx += metaP.measureText(card.meta) + 20 * k;
+        }
+        if (card.progress >= 0) {
+            r.set(mx, metaY - 2.5f * k, mx + 200 * k, metaY + 2.5f * k);
+            fill.setColor(Ui.alpha(0x40FFFFFF, alpha));
+            c.drawRoundRect(r, 3 * k, 3 * k, fill);
+            fill.setColor(Ui.alpha(Look.INK, alpha));
+            r.right = r.left + r.width() * card.progress;
+            c.drawRoundRect(r, 3 * k, 3 * k, fill);
+            mx += 220 * k;
+            if (!card.left.isEmpty()) c.drawText(card.left, mx, metaY + Ui.halfCap(metaP), metaP);
+        }
+        float by = metaY + 16 * k + 36 * k;
+        heroButton(c, 0, card.primary, x, by, alpha);
+        heroButton(c, 1, card.secondary, x + heroButtonWidth(0, card.primary) + 16 * k, by, alpha);
+    }
+
+    private float heroButtonWidth(int i, String label) {
+        return i == 0 ? (28 + 22 + 14 + 34) * k + buttonP.measureText(label) : 64 * k + button2P.measureText(label);
+    }
+
+    private void heroButton(Canvas c, int i, String label, float x, float top, float alpha) {
+        boolean focused = overlayKind == OV_NONE && zone == Z_HERO && heroIndex == i;
+        r.set(x, top, x + heroButtonWidth(i, label), top + 72 * k);
+        fill.setColor(Ui.alpha(focused ? Look.INK : i == 0 ? 0x24FFFFFF : 0x14FFFFFF, alpha));
+        c.drawRoundRect(r, 36 * k, 36 * k, fill);
+        int ink = focused ? Look.ON_INK : i == 0 ? Look.INK : Ui.alpha(Look.INK, 0.86f);
+        Paint p = i == 0 ? buttonP : button2P;
+        p.setColor(Ui.alpha(ink, alpha));
+        if (i == 0) {
+            drawIcon(c, PLAY_ICON, r.left + 28 * k + 11 * k, r.centerY(), 22 * k, Ui.alpha(ink, alpha), 0, true);
+            c.drawText(label, r.left + (28 + 22 + 14) * k, r.centerY() + Ui.halfCap(p), p);
+        } else {
+            c.drawText(label, r.left + 32 * k, r.centerY() + Ui.halfCap(p), p);
         }
     }
 
-    // MARK: - Toasts
-
-    void showToast(String text) {
-        toasts.add(text); wakeFrames();
+    private void drawRow(Canvas c, float alpha) {
+        float scroll = rowScroll.value * k;
+        float top = CARDS_TOP * k;
+        for (int i = 0; i < row.size(); i++) {
+            Card card = row.get(i);
+            float left = card.x * k - scroll;
+            if (left > w || left + CARD_W * k < -60 * k) continue;
+            if (card.sectionStart) {
+                sectionP.setColor(Ui.alpha(Look.INK, 0.72f * alpha));
+                c.drawText(card.section, left, ROW_TOP * k + 24 * 0.96f * k, sectionP);
+            }
+        }
+        // The focused card last: it grows over its neighbors.
+        int top1 = -1;
+        for (int i = 0; i < row.size() && i < rowFocus.length; i++) {
+            if (rowFocus[i].value > 0.02f && (top1 < 0 || rowFocus[i].value > rowFocus[top1].value)) top1 = i;
+        }
+        for (int i = 0; i < row.size(); i++) if (i != top1) drawCard(c, i, top, scroll, alpha);
+        if (top1 >= 0) drawCard(c, top1, top, scroll, alpha);
     }
 
-    /** Advances the toast queue; returns true while a toast fades in or out (animation). */
+    private void drawCard(Canvas c, int i, float top, float scroll, float alpha) {
+        Card card = row.get(i);
+        float left = card.x * k - scroll;
+        if (left > w || left + CARD_W * k < -60 * k) return;
+        float f = Ui.clamp(rowFocus[i].value), s = 1 + 0.05f * rowFocus[i].value;
+        float cw = CARD_W * k, ch = CARD_H * k, cx = left + cw / 2, cy = top + ch / 2;
+        r.set(cx - cw * s / 2, cy - ch * s / 2, cx + cw * s / 2, cy + ch * s / 2);
+        float radius = 14 * k * s;
+        Bitmap b = art.card(card.key, card.source);
+        clip.reset();
+        clip.addRoundRect(r, radius, radius, Path.Direction.CW);
+        c.save();
+        c.clipPath(clip);
+        if (b != null) {
+            image.setAlpha(Math.round(255 * alpha));
+            c.drawBitmap(b, null, r, image);
+            image.setAlpha(255);
+        } else {
+            drawFallback(c, r, card.title, alpha);
+        }
+        if (card.progress >= 0) {
+            fill.setColor(Ui.alpha(0x40FFFFFF, alpha));
+            c.drawRect(r.left, r.bottom - 5 * k, r.right, r.bottom, fill);
+            fill.setColor(Ui.alpha(Look.INK, alpha));
+            c.drawRect(r.left, r.bottom - 5 * k, r.left + r.width() * card.progress, r.bottom, fill);
+        }
+        c.restore();
+        if (f > 0.01f) {
+            float gap = 4 * k, ring = 4 * k;
+            stroke.setStrokeWidth(ring);
+            stroke.setColor(Ui.alpha(Look.INK, f * alpha));
+            r2.set(r);
+            r2.inset(-gap - ring / 2, -gap - ring / 2);
+            c.drawRoundRect(r2, radius + gap + ring / 2, radius + gap + ring / 2, stroke);
+        }
+        float textTop = top + ch + 14 * k;
+        if (card.titleFit != null) {
+            cardTitleP.setColor(Ui.alpha(Look.INK, (0.78f + 0.22f * f) * alpha));
+            c.drawText(card.titleFit, left, textTop + 22 * 0.96f * k, cardTitleP);
+            cardSubP.setColor(Ui.alpha(Look.INK, (0.56f + 0.16f * f) * alpha));
+            c.drawText(card.subFit, left, textTop + 22 * 0.96f * k + 4 * k + 22 * 1.2f * k, cardSubP);
+        }
+    }
+
+    /** No picture: the title on a dark gradient (never a fake image). */
+    private void drawFallback(Canvas c, RectF box, String title, float alpha) {
+        fill.setShader(new LinearGradient(0, box.top, 0, box.bottom, Look.FALLBACK_TOP, Look.FALLBACK_BOTTOM, Shader.TileMode.CLAMP));
+        fill.setAlpha(Math.round(255 * alpha));
+        c.drawRect(box, fill);
+        fill.setShader(null);
+        fill.setAlpha(255);
+        TextPaint p = new TextPaint(bigSubP);
+        p.setTextSize(Math.min(30 * k, box.height() * 0.16f));
+        p.setTypeface(Ui.semibold);
+        p.setColor(Ui.alpha(Look.INK, 0.7f * alpha));
+        String fit = TextUtils.ellipsize(title, p, box.width() - 40 * k, TextUtils.TruncateAt.END).toString();
+        c.drawText(fit, box.left + 20 * k, box.bottom - 24 * k, p);
+    }
+
+    // MARK: - Drawing: logos
+
+    private void drawLogos(Canvas c, float alpha) {
+        if (overlayKind == OV_ALL) alpha *= 1 - Ui.clamp(overlayT.value);
+        if (alpha <= 0.004f) return;
+        boolean dayLook = day() && contentT.value < 0.5f;
+        int ink = dayLook ? Look.DAY_INK : Look.INK;
+        PorterDuffColorFilter tint = dayLook ? DAY_TINT : INK_TINT;
+        for (int i = 0; i < shelf.size() && i < logoX.length; i++) {
+            HomeApps.Item it = shelf.get(i);
+            boolean focused = overlayKind == OV_NONE && zone == Z_LOGOS && logoIndex == i;
+            float s = focused ? 1.12f : 1;
+            float ww = logoW[i] * k * s, hh = logoH[i] * k * s;
+            float cx = (logoX[i] + logoW[i] / 2) * k, cy = LOGO_CY * k;
+            float a = alpha * (focused ? 1 : dayLook ? 0.7f : 0.6f);
+            Bitmap b = whiteLogo(it);
+            if (b != null) {
+                r.set(cx - ww / 2, cy - hh / 2, cx + ww / 2, cy + hh / 2);
+                image.setColorFilter(tint);
+                image.setAlpha(Math.round(255 * a));
+                c.drawBitmap(b, null, r, image);
+                image.setColorFilter(null);
+                image.setAlpha(255);
+            } else {
+                logoNameP.setColor(Ui.alpha(ink, a));
+                logoNameP.setTextSize(26 * k * s);
+                c.drawText(it.label, cx - logoNameP.measureText(it.label) / 2, cy + Ui.halfCap(logoNameP), logoNameP);
+                logoNameP.setTextSize(26 * k);
+            }
+            if (focused) {
+                fill.setColor(Ui.alpha(ink, alpha));
+                c.drawCircle(cx, cy + 32 * k - 5 * k, 3 * k, fill);
+                if (editing) {
+                    logoNameP.setColor(Ui.alpha(ink, alpha));
+                    c.drawText("‹", cx - ww / 2 - 26 * k, cy + Ui.halfCap(logoNameP), logoNameP);
+                    c.drawText("›", cx + ww / 2 + 14 * k, cy + Ui.halfCap(logoNameP), logoNameP);
+                }
+            }
+        }
+        if (editing && logoIndex < shelf.size()) drawEditHints(c, ink, alpha);
+    }
+
+    /** "← → Move Netflix   OK Done   ↓ Remove from Home" above the logos while editing (EditApps). */
+    private void drawEditHints(Canvas c, int ink, float alpha) {
+        String name = shelf.get(logoIndex).label;
+        String[][] hints = {{"← →", Ui.tr("Mover ", "Move ") + name}, {"OK", Ui.tr("Pronto", "Done")}, {"↓", Ui.tr("Tirar do Início", "Remove from Home")}};
+        float total = 0;
+        for (String[] hint : hints) total += kbdP.measureText(hint[0]) + 24 * k + 12 * k + hintP.measureText(hint[1]);
+        total += 36 * k * (hints.length - 1);
+        float x = (w - total) / 2, cy = (820 + 15) * k;
+        for (String[] hint : hints) {
+            float kw = kbdP.measureText(hint[0]) + 24 * k;
+            r.set(x, cy - 17 * k, x + kw, cy + 17 * k);
+            stroke.setStrokeWidth(1.5f * k);
+            stroke.setColor(Ui.alpha(ink, 0.6f * alpha));
+            c.drawRoundRect(r, 8 * k, 8 * k, stroke);
+            kbdP.setColor(Ui.alpha(ink, 0.85f * alpha));
+            c.drawText(hint[0], x + 12 * k, cy + Ui.halfCap(kbdP), kbdP);
+            x += kw + 12 * k;
+            hintP.setColor(Ui.alpha(ink, 0.85f * alpha));
+            c.drawText(hint[1], x, cy + Ui.halfCap(hintP), hintP);
+            x += hintP.measureText(hint[1]) + 36 * k;
+        }
+    }
+
+    // MARK: - Drawing: search
+
+    private void drawSearch(Canvas c, float alpha) {
+        keys.setActive(overlayKind == OV_NONE && zone == Z_KEYS);
+        float top = RESULTS_TOP * k;
+        if (query.trim().isEmpty()) {
+            if (recent.isEmpty()) return;
+            labelP.setColor(Ui.alpha(Look.INK, 0.66f * alpha));
+            c.drawText(Ui.tr("Recentes", "Recent"), SAFE * k, (300 + 24 * 0.96f) * k, labelP);
+            float x = SAFE * k, y = (300 + 29 + 20) * k;
+            for (int i = 0; i < recent.size(); i++) {
+                String q = recent.get(i);
+                float bw = recentP.measureText(q) + 56 * k;
+                r.set(x, y, x + bw, y + 60 * k);
+                boolean on = overlayKind == OV_NONE && zone == Z_RECENT && recentIndex == i;
+                fill.setColor(Ui.alpha(on ? Look.INK : 0x1AFFFFFF, alpha));
+                c.drawRoundRect(r, 30 * k, 30 * k, fill);
+                recentP.setColor(Ui.alpha(on ? Look.ON_INK : Look.INK, alpha));
+                c.drawText(q, x + 28 * k, r.centerY() + Ui.halfCap(recentP), recentP);
+                x += bw + 12 * k;
+            }
+            return;
+        }
+        if (sections.isEmpty()) {
+            String label;
+            if (searching) label = Ui.tr("Buscando…", "Searching…");
+            else if (!searchError.isEmpty()) label = searchError;
+            else label = Ui.tr("Nenhum título com “", "No titles match “") + query.trim() + "”";
+            labelP.setColor(Ui.alpha(Look.INK, 0.66f * alpha));
+            c.drawText(label, SAFE * k, top + 24 * 0.96f * k, labelP);
+            return;
+        }
+        // Rows scroll up under the keyboard; nothing draws above it.
+        c.save();
+        c.clipRect(0, (KEYS_TOP + KEYS_H + 20) * k, w, h);
+        float scroll = searchScroll.value;
+        for (int si = 0; si < sections.size(); si++) {
+            Section sec = sections.get(si);
+            float y = (sec.top - scroll) * k;
+            if (y > h || y + sec.height() * k < 0) continue;
+            labelP.setColor(Ui.alpha(Look.INK, 0.66f * alpha));
+            String label = sec.label;
+            if (si == 0 && searching && !sec.apps) label += "  ·  " + Ui.tr("buscando…", "searching…");
+            c.drawText(label, SAFE * k, y + 24 * 0.96f * k, labelP);
+            float itemsTop = y + (29 + 20) * k;
+            c.save();
+            c.translate(-sec.scroll.value * k, 0);
+            if (sec.apps) drawAppResults(c, sec, si, itemsTop, alpha);
+            else for (int i = 0; i < sec.titles.size(); i++) drawResult(c, sec.titles.get(i), i, itemsTop, alpha);
+            c.restore();
+        }
+        c.restore();
+    }
+
+    private void drawAppResults(Canvas c, Section sec, int si, float y, float alpha) {
+        float x = SAFE * k;
+        for (int i = 0; i < sec.items.size(); i++) {
+            HomeApps.Item it = sec.items.get(i);
+            boolean on = overlayKind == OV_NONE && zone == Z_RESULTS && sectionIndex == si && resultIndex == i;
+            r.set(x, y, x + 240 * k, y + 120 * k);
+            fill.setColor(Ui.alpha(on ? Look.INK : 0x14FFFFFF, alpha));
+            c.drawRoundRect(r, 20 * k, 20 * k, fill);
+            int ink = on ? Look.ON_INK : Look.INK;
+            if (it.logo != null) {
+                float aspect = (float) it.logo.getWidth() / it.logo.getHeight();
+                float lh = Math.min(48 * k, 180 * k / aspect), lw = lh * aspect;
+                r2.set(r.centerX() - lw / 2, r.centerY() - lh / 2, r.centerX() + lw / 2, r.centerY() + lh / 2);
+                image.setColorFilter(on ? ON_INK_TINT : INK_TINT);
+                image.setAlpha(Math.round(255 * alpha));
+                c.drawBitmap(it.logo, null, r2, image);
+                image.setColorFilter(null);
+                image.setAlpha(255);
+            } else {
+                logoNameP.setColor(Ui.alpha(ink, alpha));
+                String fit = TextUtils.ellipsize(it.label, new TextPaint(logoNameP), 200 * k, TextUtils.TruncateAt.END).toString();
+                c.drawText(fit, r.centerX() - logoNameP.measureText(fit) / 2, r.centerY() + Ui.halfCap(logoNameP), logoNameP);
+            }
+            x += 260 * k;
+        }
+    }
+
+    private void drawResult(Canvas c, Result res, int i, float top, float alpha) {
+        float left = (SAFE + i * (RESULT_W + RESULT_GAP)) * k;
+        float f = Ui.clamp(res.focus.value);
+        float s = 1 + 0.04f * res.focus.value;
+        float cw = RESULT_W * k, ch = RESULT_H * k, cx = left + cw / 2, cy = top + ch / 2;
+        r.set(cx - cw * s / 2, cy - ch * s / 2, cx + cw * s / 2, cy + ch * s / 2);
+        float radius = 16 * k * s;
+        Bitmap b = art.card(res.key, res.source);
+        clip.reset();
+        clip.addRoundRect(r, radius, radius, Path.Direction.CW);
+        c.save();
+        c.clipPath(clip);
+        if (b != null) {
+            image.setAlpha(Math.round(255 * alpha));
+            c.drawBitmap(b, null, r, image);
+            image.setAlpha(255);
+        } else {
+            drawFallback(c, r, res.title.name, alpha);
+        }
+        c.restore();
+        if (f > 0.01f) {
+            float gap = 4 * k, ring = 4 * k;
+            stroke.setStrokeWidth(ring);
+            stroke.setColor(Ui.alpha(Look.INK, f * alpha));
+            r2.set(r);
+            r2.inset(-gap - ring / 2, -gap - ring / 2);
+            c.drawRoundRect(r2, radius + gap + ring / 2, radius + gap + ring / 2, stroke);
+        }
+        float y = top + ch + 14 * k;
+        resultTitleP.setColor(Ui.alpha(Look.INK, alpha));
+        if (res.titleFit != null) c.drawText(res.titleFit, left, y + 26 * 0.96f * k, resultTitleP);
+        if (res.whereFit != null && !res.whereFit.isEmpty()) {
+            float wy = y + 26 * 1.2f * k + 10 * k;
+            float x = left;
+            HomeApps.Item app = appFor(res.pkg);
+            if (app != null && app.logo != null) {
+                float lh = 18 * k, lw = lh * app.logo.getWidth() / app.logo.getHeight();
+                r2.set(x, wy, x + lw, wy + lh);
+                image.setColorFilter(INK_TINT);
+                image.setAlpha(Math.round(230 * alpha));
+                c.drawBitmap(app.logo, null, r2, image);
+                image.setColorFilter(null);
+                image.setAlpha(255);
+                x += lw + 12 * k;
+            }
+            whereP.setColor(Ui.alpha(Look.INK, 0.68f * alpha));
+            c.drawText(res.whereFit, x, wy + 9 * k + Ui.halfCap(whereP), whereP);
+        }
+    }
+
+    private HomeApps.Item appFor(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return null;
+        for (HomeApps.Item it : shelf) if (pkg.equals(it.pkg)) return it;
+        return null;
+    }
+
+    // MARK: - Drawing: overlays (menus, All apps, toasts)
+
+    private void drawOverlay(Canvas c) {
+        float ot = Ui.clamp(overlayT.value);
+        if (ot > 0.004f) {
+            if (overlayKind == OV_ALL || (overlayKind == OV_MENU && menuCard != null)) drawDim(c, ot);
+            if (overlayKind == OV_ALL) drawAllApps(c, ot);
+            else if (overlayKind == OV_MENU) drawMenu(c, ot);
+        }
+        drawToast(c);
+    }
+
+    private void drawMenu(Canvas c, float alpha) {
+        float menuLeft, menuTop, menuW = 600 * k;
+        if (menuCard != null) {
+            // A card's actions: the card large on the left, the menu beside it (LongPress).
+            labelP.setColor(Ui.alpha(Look.INK, 0.5f * alpha));
+            labelP.setTextSize(28 * k);
+            c.drawText(menuCard.section, SAFE * k, (168 + 28 * 0.96f) * k, labelP);
+            labelP.setTextSize(24 * k);
+            r.set(SAFE * k, 236 * k, (SAFE + 560) * k, (236 + 315) * k);
+            Bitmap b = art.card(menuCard.key, menuCard.source);
+            clip.reset();
+            clip.addRoundRect(r, 20 * k, 20 * k, Path.Direction.CW);
+            c.save();
+            c.clipPath(clip);
+            if (b != null) {
+                image.setAlpha(Math.round(255 * alpha));
+                c.drawBitmap(b, null, r, image);
+                image.setAlpha(255);
+            } else {
+                drawFallback(c, r, menuCard.title, alpha);
+            }
+            if (menuCard.progress >= 0) {
+                fill.setColor(Ui.alpha(0x40FFFFFF, alpha));
+                c.drawRect(r.left, r.bottom - 6 * k, r.right, r.bottom, fill);
+                fill.setColor(Ui.alpha(Look.INK, alpha));
+                c.drawRect(r.left, r.bottom - 6 * k, r.left + r.width() * menuCard.progress, r.bottom, fill);
+            }
+            c.restore();
+            bigTitleP.setColor(Ui.alpha(Look.INK, alpha));
+            c.drawText(menuCard.title, r.left, r.bottom + (22 + 32 * 0.96f) * k, bigTitleP);
+            bigSubP.setColor(Ui.alpha(Look.INK, 0.7f * alpha));
+            String sub = menuCard.kind == CW ? join(menuCard.sub, menuCard.entry.provider) : menuCard.sub;
+            c.drawText(sub, r.left, r.bottom + (22 + 32 * 1.2f + 6 + 24 * 0.96f) * k, bigSubP);
+            menuLeft = 712 * k;
+            menuTop = 236 * k;
+        } else {
+            // The inputs, under the Inputs button.
+            iconRect(0);
+            menuLeft = RIGHT * k - menuW;
+            menuTop = r.bottom + 20 * k;
+            fill.setColor(Ui.alpha(0xFF000000, 0.35f * alpha));
+            c.drawRect(screen, fill);
+        }
+        float itemH = 76 * k, pad = 16 * k;
+        r.set(menuLeft, menuTop, menuLeft + menuW, menuTop + pad * 2 + menu.size() * itemH + Math.max(0, menu.size() - 1) * 4 * k);
+        shadow.setColor(Ui.alpha(0xFF000000, 0.5f * alpha));
+        r2.set(r);
+        r2.offset(0, 30 * k);
+        c.drawRoundRect(r2, 30 * k, 30 * k, shadow);
+        fill.setColor(Ui.alpha(0xF0161211, alpha));
+        c.drawRoundRect(r, 30 * k, 30 * k, fill);
+        stroke.setStrokeWidth(Math.max(1, k));
+        stroke.setColor(Ui.alpha(0x1FFFFFFF, alpha));
+        c.drawRoundRect(r, 30 * k, 30 * k, stroke);
+        float y = r.top + pad;
+        for (int i = 0; i < menu.size(); i++) {
+            MenuItem item = menu.get(i);
+            boolean on = i == menuIndex;
+            r2.set(r.left + pad, y, r.right - pad, y + itemH);
+            if (on) {
+                fill.setColor(Ui.alpha(Look.INK, alpha));
+                c.drawRoundRect(r2, 18 * k, 18 * k, fill);
+            }
+            int ink = on ? 0xFF14100F : Ui.alpha(Look.INK, item.dim ? 0.5f : 1);
+            float x = r2.left + 24 * k;
+            if (item.icon != null) {
+                drawIcon(c, item.icon, x + 11 * k, r2.centerY(), 22 * k, Ui.alpha(ink, alpha), 2f, item.icon == PLAY_ICON);
+                x += 22 * k + 18 * k;
+            }
+            Paint p = on ? menuItemOnP : menuItemP;
+            p.setColor(Ui.alpha(ink, alpha));
+            c.drawText(item.label, x, r2.centerY() + Ui.halfCap(p), p);
+            y += itemH + 4 * k;
+        }
+    }
+
+    private void drawAllApps(Canvas c, float alpha) {
+        allTitleP.setColor(Ui.alpha(Look.INK, alpha));
+        float shift = allScroll.value * 100 * k;
+        c.drawText(Ui.tr("Todos os apps", "All apps"), SAFE * k, (88 + 30 + 56 * 0.36f) * k - shift, allTitleP);
+        String edit = Ui.tr("Editar apps do Início", "Edit Home apps");
+        float bw = editP.measureText(edit) + 56 * k;
+        r.set(RIGHT * k - bw, (88 + 30 - 30) * k - shift, RIGHT * k, (88 + 30 + 30) * k - shift);
+        boolean editOn = allIndex < 0;
+        fill.setColor(Ui.alpha(editOn ? Look.INK : 0x1FFFFFFF, alpha));
+        c.drawRoundRect(r, 30 * k, 30 * k, fill);
+        editP.setColor(Ui.alpha(editOn ? Look.ON_INK : Look.INK, alpha));
+        c.drawText(edit, r.left + 28 * k, r.centerY() + Ui.halfCap(editP), editP);
+        float colW = (1768 - 3 * 24) / 4f;
+        for (int i = 0; i < allApps.size(); i++) {
+            int rowN = i / 4, col = i % 4;
+            float x = (76 + col * (colW + 24)) * k, y = (248 + rowN * 100) * k - shift;
+            if (y > h || y + 92 * k < 0) continue;
+            r.set(x, y, x + colW * k, y + 92 * k);
+            boolean on = i == allIndex;
+            if (on) {
+                fill.setColor(Ui.alpha(Look.INK, alpha));
+                c.drawRoundRect(r, 22 * k, 22 * k, fill);
+            }
+            Paint p = on ? allItemOnP : allItemP;
+            p.setColor(Ui.alpha(on ? Look.ON_INK : Look.INK, alpha));
+            String label = allApps.get(i).label;
+            c.drawText(label, r.left + 20 * k, r.centerY() + Ui.halfCap(p), p);
+        }
+    }
+
+    void showToast(String text) {
+        toasts.add(text);
+        wakeFrames();
+    }
+
     private boolean tickToast(long up) {
         if (toast != null && up - toastAt > TOAST_MS) {
             toast = null;
-            toastLayer.invalidate();
+            overlay.invalidate();
         }
-        if (toast == null && toastPaint != null) {
+        if (toast == null) {
             String next = toasts.poll();
             if (next != null) {
-                toast = layout(next);
+                toast = next;
                 toastAt = up;
+                overlay.setVisibility(VISIBLE);
             }
         }
         if (toast == null) return false;
         long age = up - toastAt;
-        boolean fading = age < 350 || age > TOAST_MS - 450;
-        if (fading) toastLayer.invalidate();
-        return fading;
+        return age < 350 || age > TOAST_MS - 450;
     }
 
     private void drawToast(Canvas c) {
@@ -1624,37 +1745,28 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float age = (SystemClock.uptimeMillis() - toastAt) / 1000f;
         float a = Math.min(Ui.clamp(age / 0.3f), Ui.clamp((TOAST_MS / 1000f - age) / 0.4f));
         if (a <= 0) return;
-        float padX = 28 * k, padY = 18 * k, icon = 26 * k, iconW = Symbols.width(getContext(), "bell", icon);
-        float tw = toast.getWidth() + iconW + 16 * k, th = toast.getHeight();
-        float toastTop = 64 * k - (1 - a) * 16 * k;
-        tmp.set((w - tw) / 2f - padX, toastTop, (w + tw) / 2f + padX, toastTop + th + 2 * padY);
-        int save = c.saveLayerAlpha(tmp.left - 4, tmp.top - 4, tmp.right + 4, tmp.bottom + 4, Math.round(255 * a));
-        scene.glass(c, tmp, Math.min(tmp.height() / 2, 32 * k), SMOKE, 0.55f, 0, 0, 0.02f, 1);
-        Symbols.draw(getContext(), c, "bell", tmp.left + padX + iconW / 2, tmp.centerY(), icon, 0xEBFFFFFF);
-        c.translate(tmp.left + padX + iconW + 16 * k, tmp.top + padY);
-        toast.draw(c);
-        c.restoreToCount(save);
-    }
-
-    private StaticLayout layout(String text) {
-        int max = Math.round(720 * k);
-        int width = (int) Math.min(max, Math.ceil(Layout.getDesiredWidth(text, toastPaint)));
-        return StaticLayout.Builder.obtain(text, 0, text.length(), toastPaint, Math.max(1, width))
-                .setMaxLines(2)
-                .setEllipsize(TextUtils.TruncateAt.END)
-                .build();
+        String fit = TextUtils.ellipsize(toast, new TextPaint(toastP), 1100 * k, TextUtils.TruncateAt.END).toString();
+        float tw = toastP.measureText(fit), top = (150 - (1 - a) * 16) * k;
+        r.set((w - tw) / 2 - 32 * k, top, (w + tw) / 2 + 32 * k, top + 64 * k);
+        fill.setColor(Ui.alpha(0xEB121214, a));
+        c.drawRoundRect(r, 32 * k, 32 * k, fill);
+        stroke.setStrokeWidth(Math.max(1, k));
+        stroke.setColor(Ui.alpha(0x1AFFFFFF, a));
+        c.drawRoundRect(r, 32 * k, 32 * k, stroke);
+        toastP.setColor(Ui.alpha(Look.INK, a));
+        c.drawText(fit, r.left + 32 * k, r.centerY() + Ui.halfCap(toastP), toastP);
     }
 
     /** New notices from the main process (mode switches, the check after the TV boots): those from the last 24 h. */
     private void checkNotices() {
         final Context c = getContext().getApplicationContext();
-        LOADER.execute(() -> {
+        WORK.execute(() -> {
             JSONArray list = HomeMode.state(c).optJSONArray("notices");
             if (list == null) return;
             long seen = ui.getLong("seenNotice", 0), newest = seen;
             long cutoff = System.currentTimeMillis() - 24 * 3600_000L;
             final List<String> fresh = new ArrayList<>();
-            for (int i = list.length() - 1; i >= 0; i--) {   // the list comes newest first
+            for (int i = list.length() - 1; i >= 0; i--) {
                 JSONObject o = list.optJSONObject(i);
                 if (o == null) continue;
                 long at = o.optLong("at");
@@ -1667,34 +1779,249 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         });
     }
 
-    // MARK: - Lists (in the background, so returning to the home screen isn't delayed)
+    // MARK: - Modes and focus
 
-    private void reload() {
-        final Context c = getContext().getApplicationContext();
-        LOADER.execute(() -> {
-            final List<HomeApps.Item> s = HomeApps.shelf(c, true);
-            final List<HomeApps.Item> st = statusList(c);
-            final List<HomeApps.Item> d = drawerList(c);
-            final List<HomeApps.Item> o = HomeApps.others(c);
-            handler.post(() -> {
-                setShelf(s);
-                setStatusItems(st);
-                setDrawerItems(d);
-                if (!sheetOpen) setOthers(o);
-                wakeFrames();
-            });
-        });
+    private void setMode(int next) {
+        mode = next;
+        contentT.target = next == CONTENT ? 1 : 0;
+        searchT.target = next == SEARCH ? 1 : 0;
+        if (next == SEARCH) {
+            keys.setVisibility(VISIBLE);
+        } else {
+            keys.setActive(false);
+        }
+        wakeFrames();
     }
 
-    // MARK: - Keys: only the arrows, OK and Back (system keys pass through to the system)
+    private void aimRow(boolean snap) {
+        for (int i = 0; i < rowFocus.length; i++) {
+            rowFocus[i].target = overlayKind == OV_NONE && zone == Z_ROW && i == rowIndex ? 1 : 0;
+            if (snap) rowFocus[i].snap(rowFocus[i].target);
+        }
+        if (!row.isEmpty()) {
+            Card c = row.get(Math.min(rowIndex, row.size() - 1));
+            float target = rowScroll.target;
+            if (c.x - target < SAFE) target = c.x - SAFE;
+            if (c.x + CARD_W - target > RIGHT - 120) target = c.x + CARD_W - (RIGHT - 120);
+            float last = row.get(row.size() - 1).x + CARD_W - RIGHT;
+            rowScroll.target = Math.max(0, Math.min(Math.max(0, last), target));
+            if (snap) rowScroll.snap(rowScroll.target);
+        }
+        Result focused = focusedResult();
+        for (Result res : results) {
+            res.focus.target = overlayKind == OV_NONE && zone == Z_RESULTS && res == focused ? 1 : 0;
+            if (snap) res.focus.snap(res.focus.target);
+        }
+        // Keep the focused row of results in view (it scrolls under the keyboard).
+        float target = searchScroll.target;
+        if (zone == Z_RESULTS && sectionIndex < sections.size()) {
+            Section sec = sections.get(sectionIndex);
+            if (sec.top - target < RESULTS_TOP) target = sec.top - RESULTS_TOP;
+            if (sec.top + sec.height() - target > 1060) target = sec.top + sec.height() - 1060;
+            // Sideways: keep the focused card inside the safe area.
+            float step = sec.apps ? 260 : RESULT_W + RESULT_GAP, width = sec.apps ? 240 : RESULT_W;
+            float x = resultIndex * step, sx = sec.scroll.target;
+            if (x - sx < 0) sx = x;
+            if (x + width - sx > RIGHT - SAFE) sx = x + width - (RIGHT - SAFE);
+            sec.scroll.target = Math.max(0, sx);
+            if (snap) sec.scroll.snap(sec.scroll.target);
+        } else if (zone != Z_RESULTS) {
+            target = 0;
+        }
+        searchScroll.target = Math.max(0, target);
+        if (snap) searchScroll.snap(searchScroll.target);
+    }
+
+    /** After every move: springs, the hero's picture, a click, and TalkBack's description. */
+    private void moved() {
+        aimRow(false);
+        if (zone == Z_ROW) scheduleHero();
+        click.move();
+        setContentDescription(describe());
+        changed();
+    }
+
+    private String describe() {
+        switch (zone) {
+            case Z_ICONS: return new String[] {Ui.tr("Entradas", "Inputs"), Ui.tr("Todos os apps", "All apps"), Ui.tr("Configurações", "Settings")}[iconIndex];
+            case Z_PILL: return Ui.tr("Buscar", "Search") + (query.isEmpty() ? "" : ": " + query);
+            case Z_CHIP: return chipEntry() == null ? "" : Ui.tr("Continuar ", "Resume ") + chipEntry().title;
+            case Z_LOGOS: return logoIndex < shelf.size() ? shelf.get(logoIndex).label : "";
+            case Z_ROW: return focusedCard() == null ? "" : focusedCard().title + ", " + focusedCard().sub;
+            case Z_HERO: return focusedCard() == null ? "" : heroIndex == 0 ? focusedCard().primary : focusedCard().secondary;
+            case Z_RESULTS: {
+                Result res = focusedResult();
+                if (res != null) return res.title.name + ", " + res.where;
+                HomeApps.Item app = focusedApp();
+                return app == null ? "" : app.label;
+            }
+            default: return "";
+        }
+    }
+
+    private boolean hasRow() {
+        return online && !row.isEmpty();
+    }
+
+    private void toRow() {
+        zone = Z_ROW;
+        if (mode != CONTENT) {
+            setMode(CONTENT);
+            rowIndex = 0;
+            aimRow(true);
+        }
+        scheduleHero();
+    }
+
+    private void toLogos() {
+        if (shelf.isEmpty()) return;
+        zone = Z_LOGOS;
+    }
+
+    private void move(int dx, int dy) {
+        if (editing) {
+            moveEditing(dx, dy);
+            return;
+        }
+        switch (zone) {
+            case Z_ICONS:
+                if (dx < 0 && iconIndex == 0) { zone = Z_PILL; break; }
+                if (dx != 0) {
+                    int next = Math.max(0, Math.min(2, iconIndex + dx));
+                    if (next == iconIndex) return;
+                    iconIndex = next;
+                } else if (dy > 0) {
+                    if (mode == CONTENT) { zone = Z_HERO; heroIndex = 0; }
+                    else if (mode == SEARCH || (online && Setup.hasKey())) zone = Z_PILL;
+                    else if (online) zone = Z_SETUP;
+                    else if (!shelf.isEmpty()) zone = Z_LOGOS;
+                    else return;
+                } else {
+                    return;
+                }
+                break;
+            case Z_PILL:
+                if (dy < 0 || (dx > 0 && mode != REST)) { zone = Z_ICONS; iconIndex = 0; break; }
+                if (dx != 0) return;
+                if (mode == SEARCH) { zone = Z_KEYS; break; }
+                if (mode == CONTENT) { zone = Z_HERO; heroIndex = 0; break; }
+                if (chipEntry() != null) zone = Z_CHIP;
+                else if (hasRow()) toRow();
+                else if (!shelf.isEmpty()) toLogos();
+                else return;
+                break;
+            case Z_SETUP:
+                if (dy < 0) { zone = Z_ICONS; iconIndex = 0; }
+                else if (dy > 0 && !shelf.isEmpty()) toLogos();
+                else return;
+                break;
+            case Z_CHIP:
+                if (dy < 0) zone = Z_PILL;
+                else if (dy > 0) { if (hasRow()) toRow(); else if (!shelf.isEmpty()) toLogos(); else return; }
+                else return;
+                break;
+            case Z_HERO:
+                if (dx != 0) {
+                    int next = Math.max(0, Math.min(1, heroIndex + dx));
+                    if (next == heroIndex) return;
+                    heroIndex = next;
+                } else if (dy < 0) {
+                    zone = Z_PILL;
+                } else {
+                    zone = Z_ROW;
+                }
+                break;
+            case Z_ROW:
+                if (dx != 0) {
+                    int next = Math.max(0, Math.min(row.size() - 1, rowIndex + dx));
+                    if (next == rowIndex) return;
+                    rowIndex = next;
+                    heroTitleFor = null;
+                } else if (dy < 0) {
+                    zone = Z_HERO;
+                    heroIndex = 0;
+                } else {
+                    if (shelf.isEmpty()) return;
+                    toLogos();
+                }
+                break;
+            case Z_LOGOS:
+                if (dx != 0) {
+                    int next = Math.max(0, Math.min(shelf.size() - 1, logoIndex + dx));
+                    if (next == logoIndex) return;
+                    logoIndex = next;
+                } else if (dy < 0) {
+                    if (mode == CONTENT && hasRow()) zone = Z_ROW;
+                    else if (!online || !Setup.hasKey()) zone = !online ? Z_ICONS : Z_SETUP;
+                    else if (chipEntry() != null) zone = Z_CHIP;
+                    else zone = Z_PILL;
+                } else {
+                    return;
+                }
+                break;
+            case Z_KEYS:
+                if (dy < 0) zone = Z_PILL;
+                else if (dy > 0) {
+                    if (query.trim().isEmpty()) { if (recent.isEmpty()) return; zone = Z_RECENT; recentIndex = 0; }
+                    else if (!sections.isEmpty()) { zone = Z_RESULTS; sectionIndex = 0; resultIndex = 0; }
+                    else return;
+                } else {
+                    return;
+                }
+                break;
+            case Z_RESULTS: {
+                Section sec = sections.get(Math.min(sectionIndex, sections.size() - 1));
+                if (dx != 0) {
+                    int next = Math.max(0, Math.min(sec.size() - 1, resultIndex + dx));
+                    if (next == resultIndex) return;
+                    resultIndex = next;
+                } else if (dy < 0) {
+                    if (sectionIndex == 0) zone = Z_KEYS;
+                    else { sectionIndex--; resultIndex = Math.min(resultIndex, sections.get(sectionIndex).size() - 1); }
+                } else {
+                    if (sectionIndex >= sections.size() - 1) return;
+                    sectionIndex++;
+                    resultIndex = Math.min(resultIndex, sections.get(sectionIndex).size() - 1);
+                }
+                break;
+            }
+            case Z_RECENT:
+                if (dx != 0) {
+                    int next = Math.max(0, Math.min(recent.size() - 1, recentIndex + dx));
+                    if (next == recentIndex) return;
+                    recentIndex = next;
+                } else if (dy < 0) {
+                    zone = Z_KEYS;
+                } else {
+                    return;
+                }
+                break;
+            default:
+                return;
+        }
+        moved();
+    }
+
+    // MARK: - Keys
 
     boolean onKey(KeyEvent e) {
+        if (opening != null && opening.playing()) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN) opening.skip();
+            return true;
+        }
         wakeFrames();
-        if (zone == Z_CONTINUE && continueRow.hasFocus()) return false;
         boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
-        switch (e.getKeyCode()) {
+        int code = e.getKeyCode();
+        if (overlayKind != OV_NONE) return overlayKey(e);
+        if (mode == SEARCH && zone == Z_KEYS && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
+                || code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+            if (down && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) click.move();
+            keys.handle(e);
+            return true;
+        }
+        switch (code) {
             case KeyEvent.KEYCODE_SEARCH:
-                if (down && e.getRepeatCount() == 0) activity.startActivity(new Intent(activity, SearchActivity.class));
+                if (down && e.getRepeatCount() == 0) startSearch();
                 return true;
             case KeyEvent.KEYCODE_DPAD_LEFT:
                 if (down) move(-1, 0);
@@ -1711,20 +2038,24 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
             case KeyEvent.KEYCODE_NUMPAD_ENTER:
-                // Opens on release, and only if the press happened here: the release of an OK pressed inside another
-                // app opens nothing.
+                // Opens on release, and only if the press happened here (the release of an OK pressed inside another
+                // app opens nothing). Held: the long-press actions.
                 if (down) {
                     if (e.getRepeatCount() == 0) {
                         okDown = true;
-                        handler.postDelayed(editApps, 650);
-                    } else if (e.isLongPress()) {
-                        openAppEditor();
+                        handler.postDelayed(longPress, 650);
+                    } else if (e.isLongPress() && okDown) {
+                        handler.removeCallbacks(longPress);
+                        longPress.run();
                     }
                 } else {
-                    handler.removeCallbacks(editApps);
+                    handler.removeCallbacks(longPress);
                     if (okDown && !e.isCanceled()) activate();
                     okDown = false;
                 }
+                return true;
+            case KeyEvent.KEYCODE_MENU:
+                if (down && e.getRepeatCount() == 0) onLongPress();
                 return true;
             case KeyEvent.KEYCODE_BACK:
                 if (down) {
@@ -1734,473 +2065,746 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     backDown = false;
                 }
                 return true;
+            case KeyEvent.KEYCODE_DEL:
+                if (down && mode == SEARCH && !query.isEmpty()) setQuery(query.substring(0, query.length() - 1));
+                return mode == SEARCH;
             default:
+                int ch = e.getUnicodeChar();
+                if (down && ch > 0 && !Character.isISOControl(ch) && (Character.isLetterOrDigit(ch) || ch == ' ')) {
+                    if (mode != SEARCH) startSearch();
+                    setQuery(query + Character.toString((char) ch).toLowerCase(Locale.ROOT));
+                    return true;
+                }
                 return false;
         }
     }
 
     private void back() {
-        if (sheetOpen) {
-            closeSheet();
-        } else if (zone == Z_DRAWER) {
-            closeDrawer();
-            retarget(false);
-        } else if (zone != Z_TOP || topIndex != 6) {
-            zone = Z_TOP; topIndex = 6;
-            retarget(false);
+        if (editing) {
+            finishEditing();
+        } else if (mode == SEARCH) {
+            setQuery("");
+            setMode(REST);
+            zone = Z_PILL;
+        } else if (mode == CONTENT) {
+            setMode(REST);
+            zone = Z_PILL;
+        } else if (zone != Z_PILL && Setup.hasKey() && online) {
+            zone = Z_PILL;
         } else {
             return;
         }
         click.move();
-    }
-
-    private void move(int dx, int dy) {
-        if (sheetOpen) {
-            moveGrid(dx, dy);
-            return;
-        }
-        if (moveLight(dx, dy)) return;
-        switch (zone) {
-            case Z_SHELF:
-                if (dx != 0) {
-                    int next = Math.max(0, Math.min(shelf.size() - 1, shelfIndex + dx));
-                    if (next == shelfIndex) return;
-                    shelfIndex = next;
-                } else if (dy < 0) {
-                    if (hero != null && hero.button) {
-                        zone = Z_HERO;
-                    } else if (!statusItems.isEmpty()) {
-                        zone = Z_STATUS;
-                        statusIndex = shelf.isEmpty() ? 0 : nearest(statusRects, tileRects[shelfIndex].centerX());
-                    } else {
-                        return;
-                    }
-                } else {
-                    if (drawerItems.isEmpty()) return;
-                    openDrawer();
-                }
-                break;
-            case Z_HERO:
-                if (dx != 0) {
-                    if (!browse(dx)) return;
-                } else if (dy < 0) {
-                    if (statusItems.isEmpty()) return;
-                    zone = Z_STATUS;
-                    statusIndex = 0;
-                } else {
-                    zone = Z_SHELF;
-                }
-                break;
-            case Z_STATUS:
-                if (dx != 0) {
-                    int next = Math.max(0, Math.min(statusItems.size() - 1, statusIndex + dx));
-                    if (next == statusIndex) return;
-                    statusIndex = next;
-                } else if (dy > 0) {
-                    if (hero != null && hero.button) {
-                        zone = Z_HERO;
-                    } else {
-                        zone = Z_SHELF;
-                        if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, statusRects[statusIndex].centerX());
-                    }
-                } else {
-                    return;
-                }
-                break;
-            default:
-                if (dx != 0) {
-                    int next = Math.max(0, Math.min(drawerItems.size() - 1, drawerIndex + dx));
-                    if (next == drawerIndex) return;
-                    drawerIndex = next;
-                } else if (dy < 0) {
-                    closeDrawer();
-                } else {
-                    return;
-                }
-                break;
-        }
-        retarget(false);
-        click.move();
-    }
-
-    private static int nearest(RectF[] rects, float x) {
-        int best = 0;
-        float bestDistance = Float.MAX_VALUE;
-        for (int i = 0; i < rects.length; i++) {
-            float d = Math.abs(rects[i].centerX() - x);
-            if (d < bestDistance) {
-                bestDistance = d;
-                best = i;
-            }
-        }
-        return best;
-    }
-
-    private void moveGrid(int dx, int dy) {
-        int n = others.size();
-        if (n == 0) return;
-        int r = gridIndex / COLUMNS, col = gridIndex % COLUMNS;
-        int rows = (n + COLUMNS - 1) / COLUMNS;
-        int next = gridIndex;
-        if (dx != 0) {
-            int candidate = gridIndex + dx;
-            if (candidate >= 0 && candidate < n && candidate / COLUMNS == r) next = candidate;
-        } else {
-            int targetRow = r + dy;
-            if (targetRow >= 0 && targetRow < rows) next = Math.min(n - 1, targetRow * COLUMNS + col);
-        }
-        if (next == gridIndex) return;
-        gridIndex = next;
-        retargetGrid(false);
-        click.move();
-        gridDirty = true;
+        aimRow(false);
+        changed();
     }
 
     private void activate() {
-        HomeApps.Item it;
-        RectF r;
-        if (sheetOpen) {
-            if (others.isEmpty()) return;
-            it = others.get(gridIndex);
-            r = focusedCell;
-        } else if (zone == Z_HERO) {
-            Recs.Pick p = currentPick();
-            if (p == null || p.pkg == null) return;
-            activity.startActivity(new Intent(activity, SearchActivity.class)
-                    .putExtra("title_id", p.id).putExtra("title_kind", p.kind).putExtra("title_name", p.title));
-            return;
-        } else if (zone == Z_STATUS) {
-            if (statusItems.isEmpty()) return;
-            it = statusItems.get(statusIndex);
-            r = statusRects[statusIndex];
-        } else if (zone == Z_DRAWER) {
-            if (drawerItems.isEmpty()) return;
-            it = drawerItems.get(drawerIndex);
-            r = drawerRects[drawerIndex];
-        } else if (zone == Z_TOP) {
-            if (topIndex < 3) {
-                selectTab(topIndex);
+        switch (zone) {
+            case Z_ICONS:
+                click.open();
+                if (iconIndex == 0) openInputs();
+                else if (iconIndex == 1) openAllApps();
+                else start(new Intent(activity, SettingsActivity.class));
+                return;
+            case Z_PILL:
+                if (mode == SEARCH) { if (voice) startVoice(); }
+                else startSearch();
+                return;
+            case Z_SETUP:
+                click.open();
+                start(new Intent(activity, SettingsActivity.class).putExtra("section", "setup"));
+                return;
+            case Z_CHIP:
+                if (chipEntry() != null) { click.open(); resume(chipEntry()); }
+                return;
+            case Z_HERO: {
+                Card c = focusedCard();
+                if (c == null) return;
+                click.open();
+                if (heroIndex == 0) primary(c);
+                else details(c);
                 return;
             }
-            it = lightButtons.get(topIndex - 3);
-            r = topRects[topIndex];
-        } else if (zone == Z_CARDS) {
-            Recs.Pick p = cardIndex < cards.size() ? cards.get(cardIndex) : null;
-            if (p == null || p.pkg == null) return;
-            activity.startActivity(new Intent(activity, SearchActivity.class)
-                    .putExtra("title_id", p.id).putExtra("title_kind", p.kind).putExtra("title_name", p.title));
-            return;
-        } else {
-            if (shelf.isEmpty()) return;
-            it = shelf.get(shelfIndex);
-            r = tileRects[shelfIndex];
-        }
-        click.open();
-        if (it.kind == HomeApps.ALL_APPS) {
-            openSheet();
-            return;
-        }
-        if (it.kind == HomeApps.INPUTS) {
-            openDrawer();
-            for (int i = 0; i < drawerItems.size(); i++) {
-                if (drawerItems.get(i).kind == HomeApps.INPUT) {
-                    drawerIndex = i;
-                    break;
-                }
+            case Z_ROW: {
+                Card c = focusedCard();
+                if (c == null) return;
+                click.open();
+                if (c.kind == CW) resume(c.entry);
+                else details(c);
+                return;
             }
-            retarget(false);
-            return;
-        }
-        boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top),
-                Math.round(r.width()), Math.round(r.height()));
-        if (!opened) showToast(Ui.tr("Não deu para abrir ", "Couldn't open ") + it.label + ".");
-    }
-
-    // MARK: - Light design: title, tabs, cards and icon-only buttons
-
-    private void layoutLight() {
-        if (lTab == null) return;
-        // Text tabs; the focus pill extends 26 px past the text (the first tab's text starts at the margin).
-        float pad = 26 * k, tabTop = L_TABBAR_TOP * k, tabBottom = (L_TABBAR_TOP + L_TABBAR_H) * k;
-        float x = MARGIN * k - pad;
-        for (int i = 0; i < 3; i++) {
-            float tw = Math.max(lTabOn.measureText(tabs()[i]), lTab.measureText(tabs()[i]));
-            topRects[i].set(x, tabTop, x + tw + 2 * pad, tabBottom);
-            x = topRects[i].right + 4 * k;
-        }
-        float b = L_BUTTON * k, right = CONTENT_R * k, cy = L_BUTTON_CY * k;
-        for (int i = lightButtons.size() - 1; i >= 0; i--) {
-            float width = i == 3 ? 230 * k : b;
-            topRects[3 + i].set(right - width, cy - b / 2, right, cy + b / 2);
-            right -= width + L_BUTTON_GAP * k;
-        }
-        float top = L_CARDS_TOP * k, ch = L_CARD_H * k, g = L_CARD_GAP * k, left = MARGIN * k, tall = L_TALL_W * k;
-        float wide = (CONTENT_R - MARGIN) * k - 2 * tall - 2 * g;
-        cardRects[0].set(left, top, left + wide, top + ch);
-        cardRects[1].set(cardRects[0].right + g, top, cardRects[0].right + g + tall, top + ch);
-        cardRects[2].set(cardRects[1].right + g, top, cardRects[1].right + g + tall, top + ch);
-        heroDirty = statusDirty = true;
-    }
-
-    /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one. */
-    private void updateCards() {
-        List<Recs.Pick> list = recs.now(TAB_KIND[tab]);
-        if (!samePicks(list, cards)) {
-            cards = list;
-            cardIndex = Math.min(cardIndex, Math.max(0, list.size() - 1));
-            if (zone == Z_CARDS && list.isEmpty()) {
-                zone = Z_SHELF;
-                retarget(false);
-            }
-        }
-        if (!hasContinue()) for (Recs.Pick p : cards) recs.backdrop(p);
-        Backdrop b = cards.isEmpty() ? null : hasContinue() ? recs.background(cards.get(0)) : recs.backdrop(cards.get(0));
-        if (cards.isEmpty() || b != null) showBackdrop(b);
-        heroDirty = true;
-    }
-
-    private void selectTab(int index) {
-        if (index == tab) return;
-        tab = index;
-        updateCards();
-        heroDirty = true;
-    }
-
-    /**
-     * Background: the first card's photo, heavily blurred and almost white; without it, a light gradient. At night, the
-     * same photo almost black (or a dark gradient), drawn on top during the transition.
-     */
-    private void drawLightSky(Canvas c) {
-        long up = SystemClock.uptimeMillis();
-        float e = bgFadeAt == 0 ? 1 : fadeEase(bgFadeAt, up);
-        boolean fading = bgFadeAt != 0;
-        // Drawer open: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
-        android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
-        if (bgTo == null || (fading && bgFrom == null)) {
-            if (lightGradient == null) lightGradient = new LinearGradient(0, 0, 0, h, 0xFFF5F5F7, 0xFFE2E2E7, Shader.TileMode.CLAMP);
-            if (nightGradient == null) nightGradient = new LinearGradient(0, 0, 0, h, 0xFF1C1C1E, 0xFF0B0B0D, Shader.TileMode.CLAMP);
-            fill.setColorFilter(v);
-            if (night < 0.999f) {
-                fill.setShader(lightGradient);
-                c.drawRect(screen, fill);
-            }
-            if (night > 0.001f) {
-                fill.setShader(nightGradient);
-                fill.setAlpha(Math.round(255 * night));
-                c.drawRect(screen, fill);
-                fill.setAlpha(255);
-            }
-            fill.setShader(null);
-            fill.setColorFilter(null);
-        }
-        imagePaint.setColorFilter(v);
-        if (fading && bgFrom != null) drawLightImage(c, bgFrom, bgTo == null ? 1 - e : 1);
-        if (bgTo != null) drawLightImage(c, bgTo, fading ? e : 1);
-        imagePaint.setColorFilter(null);
-    }
-
-    private void drawLightImage(Canvas c, Backdrop b, float alpha) {
-        if (night < 0.999f || b.nightImage == null) drawImage(c, b.lightImage, alpha);
-        if (night > 0.001f) drawImage(c, b.nightImage, alpha * night);
-    }
-
-    private void drawLightTop(Canvas c) {
-        applyTone();
-        String hello = Ui.tr("Para você", "For You");
-        c.drawText(hello, MARGIN * k - Ui.leftBearing(lTitle, hello), L_TITLE_BASE * k, lTitle);
-        // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
-        // the white pill with a shadow and grows a little (the tvOS focus).
-        float focus = Ui.clamp(topFocus[tab].value);
-        for (int i = 0; i < 3; i++) {
-            RectF r = topRects[i];
-            if (i == tab && focus > 0.01f) {
-                float s = 1 + 0.05f * focus;
-                cell.set(r.centerX() - r.width() * s / 2, r.centerY() - r.height() * s / 2,
-                        r.centerX() + r.width() * s / 2, r.centerY() + r.height() * s / 2);
-                float rr = cell.height() / 2;
-                if (focus > 0.01f) {
-                    tmp.set(cell);
-                    tmp.offset(0, 8 * k * focus);
-                    shadow.setColor(Ui.alpha(0xFF000000, tone(0.22f, 0.4f) * focus));
-                    c.drawRoundRect(tmp, rr, rr, shadow);
-                }
-                fill.setShader(null);
-                fill.setColor(Ui.alpha(0xFFFFFFFF, focus));
-                c.drawRoundRect(cell, rr, rr, fill);
-            }
-            Paint p = i == tab ? lTabOn : lTab;
-            if (i == tab) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
-            c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
-        }
-        int top = -1;
-        if (!hasContinue()) {
-        for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
-        for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
-        if (top >= 0) drawLightCard(c, top);
-        }
-        drawQuotes(c);
-    }
-
-    /**
-     * Recommendation card: the title's photo (already at the focused card size, so it stays sharp), rounded corners and
-     * a soft shadow; when focused, it grows 5%, rises and lights up its border. Below it, the title (and on the large
-     * card, genre · runtime · service).
-     */
-    private void drawLightCard(Canvas c, int i) {
-        RectF base = cardRects[i];
-        Recs.Pick p = i < cards.size() ? cards.get(i) : null;
-        float v = cardFocus[i].value, f = Ui.clamp(v), s = 1 + 0.05f * v;
-        float bw = base.width(), bh = base.height(), r0 = 18 * k;
-        float cx = base.centerX(), cy = base.centerY() - 6 * k * v;
-        cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
-        float r = r0 * s;
-        c.save();
-        c.translate(cx, cy);
-        c.scale(s, s);
-        tmp.set(-bw / 2, -bh / 2, bw / 2, bh / 2);
-        tmp.offset(0, (10 + 14 * f) * k);
-        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
-        c.drawRoundRect(tmp, r0, r0, shadowDeep);
-        c.restore();
-        clip.reset();
-        clip.addRoundRect(cell, r, r, Path.Direction.CW);
-        c.save();
-        c.clipPath(clip);
-        Backdrop b = p == null ? null : recs.backdrop(p);
-        Bitmap img = b == null ? null : (i == 0 ? b.wide : b.tall);
-        if (img != null) {
-            c.drawBitmap(img, null, cell, bitmapPaint);
-        } else {
-            fill.setShader(null);
-            fill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
-            c.drawRect(cell, fill);
-        }
-        if (f > 0.01f) {
-            sheen.setShader(new LinearGradient(cell.left, cell.top, cell.left + cell.width() * 0.5f, cell.bottom,
-                    Ui.alpha(0xFFFFFFFF, 0.22f * f), 0x00FFFFFF, Shader.TileMode.CLAMP));
-            c.drawRect(cell, sheen);
-        }
-        c.restore();
-        if (f > 0.01f) {
-            rim.setShader(new LinearGradient(0, cell.top, 0, cell.bottom,
-                    Ui.alpha(0xFFFFFFFF, 0.9f * f), Ui.alpha(0xFFFFFFFF, 0.35f * f), Shader.TileMode.CLAMP));
-            c.drawRoundRect(cell, r, r, rim);
-        }
-        if (p == null) return;
-        TextPaint tp = new TextPaint(lCardTitle);
-        c.drawText(TextUtils.ellipsize(p.title, tp, bw, TextUtils.TruncateAt.END).toString(), base.left, base.bottom + 46 * k, lCardTitle);
-        if (i == 0 && p.meta != null && !p.meta.isEmpty()) {
-            TextPaint mp = new TextPaint(lCardMeta);
-            c.drawText(TextUtils.ellipsize(p.meta, mp, bw, TextUtils.TruncateAt.END).toString(), base.left, base.bottom + 80 * k, lCardMeta);
-        }
-    }
-
-    /**
-     * Live TV, HDMI Inputs and Settings: icon-only glass circles (light by day, smoked at night); the focused one turns
-     * white with a dark icon (the tvOS focus) and its name appears below it.
-     */
-    private void drawLightButtons(Canvas c) {
-        applyTone();
-        for (int i = 0; i < lightButtons.size(); i++) {
-            RectF r = topRects[3 + i];
-            if (i == 3) {
-                float focus = Ui.clamp(topFocus[6].value);
-                fill.setShader(null); fill.setColor(blend(tone(0xD9FFFFFF, 0xFF36363C), 0xFFFFFFFF, focus));
-                c.drawRoundRect(r, r.height() / 2, r.height() / 2, fill);
-                int ink = blend(tone(L_INK, 0xFFF5F5F7), L_INK, focus);
-                Symbols.draw(getContext(), c, "search", r.left + 38 * k, r.centerY(), 28 * k, ink);
-                lTabOn.setColor(ink);
-                c.drawText(Ui.tr("Buscar", "Search"), r.left + 66 * k, r.centerY() + Ui.halfCap(lTabOn), lTabOn);
-                continue;
-            }
-            float f = Ui.clamp(topFocus[3 + i].value), rad = r.width() / 2;
-            cell.set(r); fill.setShader(null); fill.setColor(Ui.alpha(0xFFFFFFFF, f));
-            if (f > 0.01f) c.drawRoundRect(cell, rad, rad, fill);
-            Symbols.draw(getContext(), c, lightButtons.get(i).symbol, cell.centerX(), cell.centerY(), 27 * k,
-                    blend(tone(L_INK, 0xEBFFFFFF), L_INK, f));
-            if (f > 0.01f) {
-                String label = lightButtons.get(i).label;
-                float half = lTip.measureText(label) / 2;
-                float x = Math.min(r.centerX(), CONTENT_R * k - half);
-                lTip.setAlpha(Math.round(255 * f));
-                c.drawText(label, x, r.bottom + (40 + 4 * f) * k, lTip);
-            }
-        }
-    }
-
-    private boolean moveLight(int dx, int dy) {
-        switch (zone) {
-            case Z_SHELF:
-                if (dy >= 0) return false;
-                if (hasContinue()) { enterContinue(); break; }
-                if (shelf.isEmpty() || cards.isEmpty()) {
-                    zone = Z_TOP;
-                    topIndex = 6;
-                } else {
-                    zone = Z_CARDS;
-                    cardIndex = nearest(cardRects, cards.size(), tileRects[shelfIndex].centerX());
-                }
-                break;
-            case Z_CARDS:
-                if (dx != 0) {
-                    int next = Math.max(0, Math.min(cards.size() - 1, cardIndex + dx));
-                    if (next == cardIndex) return true;
-                    cardIndex = next;
-                } else if (dy < 0) {
-                    zone = Z_TOP;
-                    topIndex = 6;
-                } else {
-                    zone = Z_SHELF;
-                    if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, cardRects[cardIndex].centerX());
-                }
-                break;
-            case Z_TOP:
-                if (dx != 0) {
-                    int next = Math.max(0, Math.min(topRects.length - 1, topIndex + dx));
-                    if (next == topIndex) return true;
-                    topIndex = next;
-                    if (topIndex < 3) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
-                } else if (dy > 0) {
-                    if (hasContinue()) { enterContinue();
-                    } else if (cards.isEmpty()) {
-                        zone = Z_SHELF;
-                    } else {
-                        zone = Z_CARDS;
-                        cardIndex = nearest(cardRects, cards.size(), topRects[topIndex].centerX());
+            case Z_LOGOS:
+                if (logoIndex < shelf.size()) {
+                    click.open();
+                    HomeApps.Item it = shelf.get(logoIndex);
+                    float cx = (logoX[logoIndex] + logoW[logoIndex] / 2) * k;
+                    if (!HomeApps.open(activity, it, this, Math.round(cx), Math.round(LOGO_CY * k), 1, 1)) {
+                        showToast(Ui.tr("Não deu para abrir ", "Couldn't open ") + it.label + ".");
                     }
-                } else {
-                    topIndex = 6;
                 }
-                break;
+                return;
+            case Z_RESULTS: {
+                Result res = focusedResult();
+                HomeApps.Item app = focusedApp();
+                if (res != null) {
+                    click.open();
+                    remember(query);
+                    openTitle(res.title.id, res.title.kind, res.title.name, null);
+                } else if (app != null) {
+                    click.open();
+                    remember(query);
+                    if (!HomeApps.open(activity, app, this, w / 2, h / 2, 1, 1)) showToast(Ui.tr("Não deu para abrir ", "Couldn't open ") + app.label + ".");
+                }
+                return;
+            }
+            case Z_RECENT:
+                if (recentIndex < recent.size()) {
+                    setQuery(recent.get(recentIndex));
+                    zone = Z_KEYS;
+                    changed();
+                }
+                return;
             default:
-                return false;
         }
-        retarget(false);
+    }
+
+    private void onLongPress() {
+        if (zone == Z_ROW && focusedCard() != null) {
+            openCardMenu(focusedCard());
+        } else if (zone == Z_CHIP && !row.isEmpty() && row.get(0).kind == CW) {
+            openCardMenu(row.get(0));
+        } else if (zone == Z_LOGOS && !shelf.isEmpty() && !editing) {
+            editing = true;
+            setMode(REST);
+            click.open();
+            changed();
+        } else if (zone == Z_ICONS && iconIndex == 2) {
+            openQuickPanel();
+        }
+    }
+
+    /** The quick panel (sleep timer, picture, headphones), when the player part of the app provides it. */
+    private void openQuickPanel() {
+        start(new Intent(activity, SettingsActivity.class));
+    }
+
+    // MARK: - Editing the app row in place
+
+    private void moveEditing(int dx, int dy) {
+        if (dx != 0) {
+            int next = logoIndex + dx;
+            if (next < 0 || next >= shelf.size()) return;
+            List<HomeApps.Item> list = new ArrayList<>(shelf);
+            HomeApps.Item it = list.remove(logoIndex);
+            list.add(next, it);
+            shelf = list;
+            logoIndex = next;
+            layoutLogos();
+            whiteLogos.clear();
+        } else if (dy > 0) {
+            HomeApps.Item it = shelf.get(logoIndex);
+            List<HomeApps.Item> list = new ArrayList<>(shelf);
+            list.remove(logoIndex);
+            shelf = list;
+            logoIndex = Math.max(0, Math.min(logoIndex, shelf.size() - 1));
+            layoutLogos();
+            whiteLogos.clear();
+            saveShelf();
+            showToast(it.label + Ui.tr(" saiu do Início. Adicione de volta em Todos os apps.", " is off Home. Add it back from All apps."));
+            if (shelf.isEmpty()) finishEditing();
+        } else {
+            return;
+        }
         click.move();
+        changed();
+    }
+
+    private void finishEditing() {
+        editing = false;
+        saveShelf();
+        changed();
+    }
+
+    private void saveShelf() {
+        final List<String> packages = new ArrayList<>();
+        for (HomeApps.Item it : shelf) packages.add(it.pkg);
+        final Context c = getContext().getApplicationContext();
+        WORK.execute(() -> HomeApps.saveShelf(c, packages));
+    }
+
+    // MARK: - Overlays
+
+    private void openOverlay(int kind) {
+        overlayKind = kind;
+        overlayT.target = 1;
+        overlay.setVisibility(VISIBLE);
+        aimRow(false);
+        changed();
+    }
+
+    private void closeOverlay() {
+        if (overlayKind == OV_NONE) return;
+        overlayKind = OV_NONE;
+        menuCard = null;
+        overlayT.target = 0;
+        overlayT.snap(0);
+        aimRow(false);
+        changed();
+    }
+
+    private void openInputs() {
+        menu.clear();
+        menuCard = null;
+        Intent live = HomeApps.liveTv(getContext());
+        if (live != null) menu.add(new MenuItem(Ui.tr("TV aberta", "Live TV"), null, false, () -> start(live)));
+        for (HomeApps.Item it : inputs) {
+            if (it.kind != HomeApps.INPUT) continue;
+            final HomeApps.Item input = it;
+            menu.add(new MenuItem(it.label, null, !it.connected, () -> {
+                if (!HomeApps.open(activity, input, this, w / 2, h / 2, 1, 1)) showToast(Ui.tr("Não deu para abrir ", "Couldn't open ") + input.label + ".");
+            }));
+        }
+        if (menu.isEmpty()) {
+            showToast(Ui.tr("Esta TV não tem entradas.", "This TV has no inputs."));
+            return;
+        }
+        menuIndex = 0;
+        openOverlay(OV_MENU);
+    }
+
+    private void openCardMenu(Card card) {
+        menu.clear();
+        menuCard = card;
+        if (card.kind == CW) {
+            ContinueWatching.Entry e = card.entry;
+            String code = e.episode > 0 ? " S" + e.season + " E" + e.episode : "";
+            menu.add(new MenuItem((e.external() ? card.primary : Ui.tr("Continuar", "Resume") + code), PLAY_ICON, false, () -> resume(e)));
+            menu.add(new MenuItem("tv".equals(e.kind) ? Ui.tr("Ir para a série", "Go to the show") : Ui.tr("Detalhes", "Details"),
+                    SHOW_ICON, false, () -> details(card)));
+            addEntryActions(card);
+        } else {
+            menu.add(new MenuItem(card.primary, PLAY_ICON, false, () -> primary(card)));
+            menu.add(new MenuItem(Ui.tr("Detalhes", "Details"), SHOW_ICON, false, () -> details(card)));
+        }
+        menuIndex = 0;
+        click.open();
+        openOverlay(OV_MENU);
+    }
+
+    /** Mark as watched and Remove, when the library supports them. */
+    private void addEntryActions(Card card) {
+    }
+
+    private void openAllApps() {
+        allApps = allAppsList();
+        allIndex = allApps.isEmpty() ? -1 : 0;
+        allScroll.snap(0);
+        openOverlay(OV_ALL);
+    }
+
+    /** Everything that opens: the Home apps and the others, Live TV and the TV's settings, by name. */
+    private List<HomeApps.Item> allAppsList() {
+        List<HomeApps.Item> list = new ArrayList<>(shelf);
+        list.addAll(others);
+        if (HomeApps.liveTv(getContext()) != null) list.add(HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("TV aberta", "Live TV"), "live_tv"));
+        boolean settings = false;
+        for (HomeApps.Item it : others) settings |= "com.android.tv.settings".equals(it.pkg) || "com.android.settings".equals(it.pkg);
+        if (!settings) list.add(HomeApps.action(HomeApps.ANDROID_SETTINGS, "tv-settings", Ui.tr("Configurações da TV", "TV Settings"), "settings"));
+        java.util.Collections.sort(list, (a, b) -> a.label.toLowerCase(Locale.ROOT).compareTo(b.label.toLowerCase(Locale.ROOT)));
+        return list;
+    }
+
+    private boolean overlayKey(KeyEvent e) {
+        boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
+        int code = e.getKeyCode();
+        if (code == KeyEvent.KEYCODE_BACK) {
+            if (!down && !e.isCanceled()) {
+                closeOverlay();
+                click.move();
+            }
+            return true;
+        }
+        if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            if (down && e.getRepeatCount() == 0) {
+                okDown = true;
+                if (overlayKind == OV_ALL) handler.postDelayed(allLongPress, 650);
+            } else if (down && e.isLongPress() && okDown && overlayKind == OV_ALL) {
+                handler.removeCallbacks(allLongPress);
+                allLongPress.run();
+            } else if (!down) {
+                handler.removeCallbacks(allLongPress);
+                if (okDown && !e.isCanceled()) overlayActivate();
+                okDown = false;
+            }
+            return true;
+        }
+        if (!down) return code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN
+                || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT;
+        int dx = code == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : code == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : 0;
+        int dy = code == KeyEvent.KEYCODE_DPAD_UP ? -1 : code == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : 0;
+        if (dx == 0 && dy == 0) return false;
+        if (overlayKind == OV_MENU) {
+            if (dy == 0) return true;
+            int next = Math.max(0, Math.min(menu.size() - 1, menuIndex + dy));
+            if (next != menuIndex) {
+                menuIndex = next;
+                click.move();
+                overlay.invalidate();
+            }
+            return true;
+        }
+        int n = allApps.size();
+        int next = allIndex;
+        if (allIndex < 0) {
+            if (dy > 0 && n > 0) next = 0;
+        } else if (dx != 0) {
+            int candidate = allIndex + dx;
+            if (candidate >= 0 && candidate < n && candidate / 4 == allIndex / 4) next = candidate;
+        } else {
+            int candidate = allIndex + dy * 4;
+            if (candidate < 0) next = -1;
+            else if (candidate < n) next = candidate;
+            else if (allIndex / 4 < (n - 1) / 4) next = n - 1;
+        }
+        if (next != allIndex) {
+            allIndex = next;
+            int rowN = Math.max(0, allIndex) / 4;
+            int rows = (n + 3) / 4;
+            float target = allScroll.target;
+            if (rowN < target) target = rowN;
+            if (rowN > target + 7) target = rowN - 7;
+            allScroll.target = Math.max(0, Math.min(Math.max(0, rows - 8), target));
+            click.move();
+            changed();
+        }
         return true;
     }
 
-    private static int nearest(RectF[] rects, int count, float x) {
-        int best = 0;
-        float bestDistance = Float.MAX_VALUE;
-        for (int i = 0; i < Math.min(count, rects.length); i++) {
-            float d = Math.abs(rects[i].centerX() - x);
-            if (d < bestDistance) {
-                bestDistance = d;
-                best = i;
-            }
+    private final Runnable allLongPress = this::allAppsLongPress;
+
+    /** Long-press in All apps: puts the app on Home, or takes it off. */
+    private void allAppsLongPress() {
+        if (!okDown || overlayKind != OV_ALL || allIndex < 0 || allIndex >= allApps.size()) return;
+        okDown = false;
+        HomeApps.Item it = allApps.get(allIndex);
+        if (it.kind != HomeApps.APP || it.pkg == null) return;
+        List<String> packages = new ArrayList<>();
+        for (HomeApps.Item s : shelf) packages.add(s.pkg);
+        boolean on = packages.contains(it.pkg);
+        if (on) packages.remove(it.pkg); else packages.add(it.pkg);
+        final Context c = getContext().getApplicationContext();
+        WORK.execute(() -> {
+            HomeApps.saveShelf(c, packages);
+            handler.post(this::reload);
+        });
+        showToast(it.label + (on ? Ui.tr(" saiu do Início.", " is off Home.") : Ui.tr(" está no Início.", " is on Home.")));
+        click.open();
+    }
+
+    private void overlayActivate() {
+        if (overlayKind == OV_MENU) {
+            if (menuIndex >= menu.size()) return;
+            Runnable action = menu.get(menuIndex).action;
+            click.open();
+            closeOverlay();
+            action.run();
+            return;
         }
-        return best;
+        if (allIndex < 0) {
+            click.open();
+            closeOverlay();
+            start(new Intent(activity, AppsActivity.class));
+            return;
+        }
+        if (allIndex >= allApps.size()) return;
+        HomeApps.Item it = allApps.get(allIndex);
+        click.open();
+        closeOverlay();
+        if (!HomeApps.open(activity, it, this, w / 2, h / 2, 1, 1)) showToast(Ui.tr("Não deu para abrir ", "Couldn't open ") + it.label + ".");
+    }
+
+    // MARK: - Actions
+
+    private void start(Intent intent) {
+        try {
+            activity.startActivity(intent);
+        } catch (RuntimeException e) {
+            showToast(Ui.tr("Não deu para abrir.", "Couldn't open that."));
+        }
+    }
+
+    /** Resume: the external app's own link, or our player at the saved position. */
+    private void resume(ContinueWatching.Entry entry) {
+        final Context c = getContext().getApplicationContext();
+        WORK.execute(() -> {
+            Intent intent = null;
+            try {
+                if (entry.external()) intent = ContinueWatching.externalIntent(c, entry);
+                else {
+                    ContinueWatching.resolve(entry);
+                    if (entry.tmdb > 0) intent = ContinueWatching.internalIntent(c, entry);
+                }
+            } catch (Exception ignored) {
+            }
+            final Intent ready = intent;
+            handler.post(() -> {
+                if (ready != null) start(ready);
+                else showToast(Ui.tr("Não foi possível abrir este título. Tente de novo.", "Couldn't open this title. Try again."));
+            });
+        });
+    }
+
+    /** The hero's main button. */
+    private void primary(Card card) {
+        if (card.kind == CW) {
+            resume(card.entry);
+            return;
+        }
+        Recs.Pick p = card.pick;
+        if (p == null) return;
+        final Context c = getContext().getApplicationContext();
+        WORK.execute(() -> {
+            Intent intent = null;
+            try {
+                TitleSearch.Title t = new TitleSearch.Title();
+                t.id = p.id;
+                t.kind = p.kind;
+                t.name = p.title;
+                t.year = "";
+                WatchOptions.Result result = WatchOptions.load(c, t);
+                for (WatchOptions.Option o : result.options) if (o.service.pkg.equals(p.pkg)) intent = WatchOptions.intent(c, o);
+            } catch (Exception ignored) {
+            }
+            if (intent == null && p.pkg != null) intent = HomeApps.launchIntent(c.getPackageManager(), p.pkg);
+            final Intent ready = intent;
+            handler.post(() -> {
+                if (ready != null) start(ready.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                else details(card);
+            });
+        });
+    }
+
+    /** The title page (episodes, sources, where it plays). */
+    private void details(Card card) {
+        if (card.kind == PICK && card.pick != null) {
+            openTitle(card.pick.id, card.pick.kind, card.pick.title, null);
+            return;
+        }
+        ContinueWatching.Entry e = card.entry;
+        if (e == null) return;
+        final Context c = getContext().getApplicationContext();
+        WORK.execute(() -> {
+            try {
+                ContinueWatching.resolve(e);
+            } catch (Exception ignored) {
+            }
+            if (e.tmdb <= 0 && e.external()) {
+                try {
+                    String name = normalize(e.title);
+                    for (TitleSearch.Title t : TitleSearch.search(e.title)) {
+                        if (!normalize(t.name).equals(name)) continue;
+                        if (e.tmdb <= 0 || t.kind.equals(e.kind)) { e.tmdb = t.id; e.kind = t.kind; }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            handler.post(() -> {
+                if (e.tmdb > 0) openTitle(e.tmdb, e.kind, e.title, e.imdb);
+                else if (e.external()) resume(e);
+                else showToast(Ui.tr("Não foi possível abrir este título. Tente de novo.", "Couldn't open this title. Try again."));
+            });
+        });
+    }
+
+    private void openTitle(int id, String kind, String name, String imdb) {
+        if (id <= 0) return;
+        Intent intent = new Intent(activity, SourcesActivity.class).putExtra("title_id", id).putExtra("title_kind", kind)
+                .putExtra("title_name", name);
+        if (imdb != null && !imdb.isEmpty()) intent.putExtra("imdb", imdb);
+        start(intent);
+    }
+
+    // MARK: - Search
+
+    private void startSearch() {
+        if (!online) {
+            showToast(Ui.tr("Sem internet: a busca volta quando a conexão voltar.", "No internet: search comes back when you're online."));
+            return;
+        }
+        setMode(SEARCH);
+        zone = Z_KEYS;
+        keys.reset();
+        loadRecent();
+        click.open();
+        changed();
+    }
+
+    private void startVoice() {
+        try {
+            activity.startActivityForResult(new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    .putExtra(RecognizerIntent.EXTRA_PROMPT, Ui.tr("Fale um filme, série ou app", "Say a movie, show or app")), HomeActivity.VOICE);
+        } catch (RuntimeException e) {
+            showToast(Ui.tr("A busca por voz não está disponível.", "Voice search isn't available."));
+        }
+    }
+
+    /** What the voice search heard (HomeActivity passes it on). */
+    void voiceResult(String text) {
+        if (text == null || text.trim().isEmpty()) return;
+        if (mode != SEARCH) startSearch();
+        setQuery(text.trim().toLowerCase(Locale.ROOT));
+    }
+
+    private void setQuery(String text) {
+        if (text.length() > 60) return;
+        query = text;
+        handler.removeCallbacks(runSearch);
+        searchToken++;
+        matchApps();
+        if (query.trim().length() < 2) {
+            results.clear();
+            searching = false;
+            searchError = "";
+        } else {
+            searching = true;
+            handler.postDelayed(runSearch, 350);
+        }
+        layoutSections();
+        if (zone == Z_RESULTS && sections.isEmpty()) zone = Z_KEYS;
+        if (zone == Z_RECENT && !query.isEmpty()) zone = Z_KEYS;
+        aimRow(false);
+        changed();
+    }
+
+    private Result focusedResult() {
+        if (sectionIndex >= sections.size()) return null;
+        Section sec = sections.get(sectionIndex);
+        return sec.apps || resultIndex >= sec.titles.size() ? null : sec.titles.get(resultIndex);
+    }
+
+    private HomeApps.Item focusedApp() {
+        if (sectionIndex >= sections.size()) return null;
+        Section sec = sections.get(sectionIndex);
+        return !sec.apps || resultIndex >= sec.items.size() ? null : sec.items.get(resultIndex);
+    }
+
+    /**
+     * Results in rows: shows and movies (the row with the best match first), then apps; apps come first when the
+     * query is the start of an app's name ("net" → Netflix). Focus stays on the same title when rows change.
+     */
+    private void layoutSections() {
+        Result keepResult = focusedResult();
+        HomeApps.Item keepApp = focusedApp();
+        sections.clear();
+        Section shows = new Section(Ui.tr("Séries", "Shows"), false), movies = new Section(Ui.tr("Filmes", "Movies"), false);
+        for (Result res : results) {
+            Section sec = "tv".equals(res.title.kind) ? shows : movies;
+            if (sec.titles.size() < ROW_RESULTS) sec.titles.add(res);
+        }
+        Section apps = new Section(Ui.tr("Apps", "Apps"), true);
+        apps.items.addAll(appResults);
+        String q = normalize(query.trim());
+        boolean appFirst = false;
+        for (HomeApps.Item it : appResults) appFirst |= !q.isEmpty() && normalize(it.label).startsWith(q);
+        if (appFirst && apps.size() > 0) sections.add(apps);
+        boolean showsFirst = !shows.titles.isEmpty() && (movies.titles.isEmpty() || shows.titles.get(0).score >= movies.titles.get(0).score);
+        for (Section sec : showsFirst ? new Section[] {shows, movies} : new Section[] {movies, shows}) if (sec.size() > 0) sections.add(sec);
+        if (!appFirst && apps.size() > 0) sections.add(apps);
+        float top = RESULTS_TOP;
+        for (Section sec : sections) {
+            sec.top = top;
+            top += sec.height();
+        }
+        sectionIndex = 0;
+        resultIndex = 0;
+        for (int i = 0; i < sections.size(); i++) {
+            Section sec = sections.get(i);
+            int at = sec.apps ? sec.items.indexOf(keepApp) : sec.titles.indexOf(keepResult);
+            if (at >= 0) { sectionIndex = i; resultIndex = at; }
+        }
+    }
+
+    private void matchApps() {
+        appResults.clear();
+        String q = normalize(query.trim());
+        if (q.isEmpty()) return;
+        List<HomeApps.Item> pool = new ArrayList<>(shelf);
+        pool.addAll(others);
+        for (HomeApps.Item it : pool) {
+            if (appResults.size() >= 6) break;
+            String name = normalize(it.label);
+            boolean match = name.startsWith(q);
+            for (String word : it.label.toLowerCase(Locale.ROOT).split("\\s+")) match |= normalize(word).startsWith(q);
+            if (match) appResults.add(it);
+        }
+    }
+
+    private static String normalize(String s) {
+        return java.text.Normalizer.normalize(s.toLowerCase(Locale.ROOT), java.text.Normalizer.Form.NFD).replaceAll("[^\\p{L}\\p{N}]", "");
+    }
+
+    /** TMDB search, then where each of the top four plays: a service you have first, else here (Stremio add-ons). */
+    private void search() {
+        final String q = query.trim();
+        final int token = searchToken;
+        final Context c = getContext().getApplicationContext();
+        WORK.execute(() -> {
+            List<Result> found = new ArrayList<>();
+            String error = "";
+            try {
+                List<TitleSearch.Title> titles = new ArrayList<>(TitleSearch.searchBoth(q));
+                // How well the name matches what you typed, then how popular it is right now (TMDB's own order
+                // mixes in plot and alternative-title matches).
+                final String typed = normalize(q);
+                java.util.Collections.sort(titles, (a, b) -> Double.compare(rank(b, typed), rank(a, typed)));
+                List<java.util.concurrent.Future<Result>> lookups = new ArrayList<>();
+                int showCount = 0, movieCount = 0;
+                for (TitleSearch.Title t : titles) {
+                    boolean show = "tv".equals(t.kind);
+                    if (show ? showCount >= ROW_RESULTS : movieCount >= ROW_RESULTS) continue;
+                    if (show) showCount++; else movieCount++;
+                    final double base = rank(t, typed);
+                    lookups.add(WHERE.submit(() -> {
+                        Result res = where(c, t);
+                        res.score = base + (!res.pkg.isEmpty() && !res.pkg.equals("com.stremio.one") ? 0.5 : 0);
+                        return res;
+                    }));
+                }
+                for (java.util.concurrent.Future<Result> f : lookups) {
+                    if (token != searchToken) break;
+                    try {
+                        found.add(f.get(6, java.util.concurrent.TimeUnit.SECONDS));
+                    } catch (Exception ignored) {
+                    }
+                }
+                java.util.Collections.sort(found, (a, b) -> Double.compare(b.score, a.score));
+            } catch (Exception e) {
+                String m = String.valueOf(e.getMessage());
+                error = m.contains("key") ? Ui.tr("A chave TMDB não funcionou. Confira em Configurações.", "The TMDB key didn't work. Check it in Settings.")
+                        : Ui.tr("Não deu para buscar agora. Tente de novo.", "Couldn't search right now. Try again.");
+            }
+            final List<Result> ready = found;
+            final String failure = error;
+            handler.post(() -> {
+                if (token != searchToken) return;
+                searching = false;
+                searchError = failure;
+                results.clear();
+                results.addAll(ready);
+                for (Result res : results) fitResult(res);
+                layoutSections();
+                if (zone == Z_RESULTS && sections.isEmpty()) zone = Z_KEYS;
+                aimRow(true);
+                changed();
+            });
+        });
+    }
+
+    /**
+     * A title's place in the results. How well the name matches what you typed (exact, starts with it, a word starts
+     * with it, contains it) and how popular it is right now (TMDB popularity and votes, log scale) both count, so a
+     * famous "VisionQuest" beats four obscure films called exactly "Vision".
+     */
+    static double rank(TitleSearch.Title t, String typed) {
+        String name = normalize(t.name);
+        double match = 0;
+        if (name.equals(typed)) match = 2;
+        else if (name.startsWith(typed)) match = 1.5;
+        else {
+            for (String word : t.name.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+                if (!word.isEmpty() && normalize(word).startsWith(typed)) { match = 1; break; }
+            }
+            if (match == 0 && name.contains(typed)) match = 0.5;
+        }
+        // Votes say "people know this"; popularity says "people look at it this week" (and spikes for daily soaps).
+        return match + 0.6 * Math.log10(1 + Math.max(0, t.popularity)) + 0.6 * Math.log10(1 + Math.max(0, t.votes));
+    }
+
+    /** Where a title plays: a streaming service you have (My services), else here through your add-ons. */
+    private static Result where(Context c, TitleSearch.Title t) {
+        Result res = new Result();
+        res.title = t;
+        res.key = "search:" + t.kind + ":" + t.id;
+        final String picture = t.backdrop.isEmpty() ? t.poster : t.backdrop;
+        res.source = () -> picture;
+        try {
+            WatchOptions.Result options = WatchOptions.catalog(c, t);
+            for (WatchOptions.Option o : options.options) {
+                if (!o.offers.contains("flatrate") && !o.offers.contains("free") && !o.offers.contains("ads")) continue;
+                if (!Prefs.serviceOn(c, o.service.pkg)) continue;
+                res.where = Ui.tr("Abre no ", "Opens in ") + o.service.name;
+                res.pkg = o.service.pkg;
+                break;
+            }
+        } catch (Exception ignored) {
+        }
+        if (res.where.isEmpty()) {
+            boolean here = AddonStore.connected(c);
+            res.where = here ? Ui.tr("Toca aqui", "Plays here")
+                    : join("tv".equals(t.kind) ? Ui.tr("Série", "Series") : Ui.tr("Filme", "Movie"), t.year);
+            if (here) res.pkg = "com.stremio.one";
+        }
+        return res;
+    }
+
+    private void fitResult(Result res) {
+        if (resultTitleP == null) return;
+        res.titleFit = TextUtils.ellipsize(res.title.name, new TextPaint(resultTitleP), RESULT_W * k, TextUtils.TruncateAt.END).toString();
+        res.whereFit = TextUtils.ellipsize(res.where, new TextPaint(whereP), (RESULT_W - 90) * k, TextUtils.TruncateAt.END).toString();
+    }
+
+    private void loadRecent() {
+        recent.clear();
+        try {
+            JSONArray a = new JSONArray(ui.getString(Prefs.RECENT_SEARCHES, "[]"));
+            for (int i = 0; i < a.length() && recent.size() < 5; i++) recent.add(a.getString(i));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void remember(String q) {
+        String clean = q.trim().toLowerCase(Locale.ROOT);
+        if (clean.length() < 2) return;
+        recent.remove(clean);
+        recent.add(0, clean);
+        while (recent.size() > 5) recent.remove(recent.size() - 1);
+        ui.edit().putString(Prefs.RECENT_SEARCHES, new JSONArray(recent).toString()).apply();
+    }
+
+    // MARK: - Network
+
+    private boolean hasNetwork() {
+        try {
+            Network n = connectivity.getActiveNetwork();
+            NetworkCapabilities caps = n == null ? null : connectivity.getNetworkCapabilities(n);
+            return caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    private void setOnline(boolean value) {
+        if (online == value) return;
+        online = value;
+        if (!online) {
+            if (mode != REST) setMode(REST);
+            if (zone != Z_ICONS && zone != Z_LOGOS) zone = shelf.isEmpty() ? Z_ICONS : Z_LOGOS;
+        } else {
+            data.refreshIfStale();
+            recs.refreshIfStale();
+            refreshRow();
+            if (zone == Z_LOGOS || zone == Z_ICONS) zone = Z_PILL;
+        }
+        buildRow();
+        changed();
     }
 
     // MARK: - Helpers
 
-    private static float smoothstep(float e0, float e1, float x) {
-        float t = Ui.clamp((x - e0) / (e1 - e0));
-        return t * t * (3 - 2 * t);
-    }
-
     private static int blend(int a, int b, float f) {
+        f = Ui.clamp(f);
         int aa = a >>> 24, ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
         int ba = b >>> 24, br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
         return (Math.round(aa + (ba - aa) * f) << 24) | (Math.round(ar + (br - ar) * f) << 16)

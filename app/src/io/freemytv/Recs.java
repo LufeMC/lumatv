@@ -185,6 +185,22 @@ final class Recs {
         return out;
     }
 
+    /**
+     * The home screen's "Trending on your apps" row: this hour's picks first, then the rest of the list that is on an
+     * app the TV has and already has its details (no repeats, no two from the same franchise).
+     */
+    List<Pick> trending(int max) {
+        List<Pick> out = new ArrayList<>(now());
+        if (!hasKey(context)) return out;
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Pick p : out) seen.add(franchise(p.title));
+        for (Pick p : picks) {
+            if (out.size() >= max) break;
+            if (p.detailed && p.pkg != null && p.backdrop != null && seen.add(franchise(p.title))) out.add(p);
+        }
+        return out;
+    }
+
     /** "Law & Order: Special Victims Unit" → "law & order" (what comes before ":" or " - "). */
     private static String franchise(String title) {
         String t = title == null ? "" : title.toLowerCase(Locale.ROOT);
