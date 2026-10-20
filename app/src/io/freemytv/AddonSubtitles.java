@@ -17,9 +17,10 @@ final class AddonSubtitles {
         String url, language, name, mime;
         /** The subtitle's own label ("SDH") and the add-on that offered it ("OpenSubtitles"). */
         String label = "", addon = "", release = "";
-        /** Timed to this exact file: a hash match, or the same release name. */
-        boolean matched;
-        int score;
+        /** Timed to this exact file: a hash match (the add-on says so), or the same release name. */
+        boolean matched, hashMatch;
+        /** The add-on's own order, and the rank from it (see rank()). */
+        int order, score;
     }
     private static final Map<String, Object[]> recent = new LinkedHashMap<String, Object[]>(4, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Object[]> eldest) { return size() > 4; }
@@ -84,7 +85,7 @@ final class AddonSubtitles {
                     JSONObject value = values.optJSONObject(j);
                     if (value == null) continue;
                     Subtitle subtitle = parse(value, info.optString("name", "Add-on"));
-                    if (subtitle != null) { subtitle.score = -j; loaded.add(subtitle); }
+                    if (subtitle != null) { subtitle.order = j; loaded.add(subtitle); }
                 }
               } catch (Exception ignored) {}
               return loaded;
@@ -116,7 +117,7 @@ final class AddonSubtitles {
         subtitle.mime = path.endsWith(".vtt") ? "text/vtt" : path.endsWith(".ass") || path.endsWith(".ssa")
                 ? "text/x-ssa" : "application/x-subrip";
         // Some add-ons say when a subtitle was found by the file's hash.
-        subtitle.matched = value.optBoolean("hashMatch") || value.optBoolean("moviehashMatch") || value.optBoolean("matchedByHash")
+        subtitle.matched = subtitle.hashMatch = value.optBoolean("hashMatch") || value.optBoolean("moviehashMatch") || value.optBoolean("matchedByHash")
                 || "hash".equalsIgnoreCase(value.optString("match")) || "moviehash".equalsIgnoreCase(value.optString("matched_by"));
         subtitle.release = (value.optString("release", "") + " " + value.optString("filename", "") + " " + subtitle.label + " " + path).toLowerCase(Locale.ROOT);
         return subtitle;
@@ -131,10 +132,10 @@ final class AddonSubtitles {
         for (Subtitle s : subtitles) {
             int shared = 0;
             for (String t : tokens(s.release == null ? "" : s.release)) if (tokens.contains(t)) shared++;
-            boolean hash = s.matched, sameRelease = shared >= 3;
-            if (sameRelease) s.matched = true;
+            boolean sameRelease = shared >= 3;
+            s.matched = s.hashMatch || sameRelease;
             String label = s.label.toLowerCase(Locale.ROOT);
-            s.score += (hash ? 200000 : 0) + (sameRelease ? 100000 : 0) + shared * 1000
+            s.score = -s.order + (s.hashMatch ? 200000 : 0) + (sameRelease ? 100000 : 0) + shared * 1000
                     - (label.contains("forced") || label.contains("sdh") || label.contains("hi") && label.length() <= 3 ? 500 : 0);
         }
         subtitles.sort((a, b) -> Integer.compare(b.score, a.score));
