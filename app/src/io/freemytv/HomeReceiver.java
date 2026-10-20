@@ -11,7 +11,10 @@ public class HomeReceiver extends BroadcastReceiver {
         if (Intent.ACTION_BOOT_COMPLETED.equals(action)) {
             HomeMode.bootCheck(context);
         } else if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
-            HomeMode.verify(context);   // app updated: complete Free My TV mode if something is missing
+            HomeMode.verify(context);   // app updated: complete LumaTV mode if something is missing
+            ModeJob.scheduleDaily(context);
+            // After the verify job (one ADB session at a time): speed up the new code, record the update.
+            ModeJob.schedule(context, ModeJob.AFTER_UPDATE, null, 30_000);
         }
     }
 }

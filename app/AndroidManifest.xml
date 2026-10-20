@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- After the TV boots (and after a TV update), checks that LumaTV mode is still as you left it. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Messages between the app's own two processes (a remote button being learned); only this app holds it. -->
+    <permission android:name="io.freemytv.permission.INTERNAL" android:protectionLevel="signature" />
+    <uses-permission android:name="io.freemytv.permission.INTERNAL" />
 
     <!-- Android 11+: without this list the app can't "see" the other apps (getLeanbackLaunchIntentForPackage
          returns null). The shelf and streaming apps, the live TV apps and, through the <intent>, every TV app
@@ -134,6 +137,19 @@
             android:name=".ModeJob"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- Remote buttons: filters keys only (no screen content), in the main process so the home screen's thread
+             never delays a key. LumaTV mode turns it on through the TV's own ADB; Original turns it off. -->
+        <service
+            android:name=".RemoteKeys"
+            android:exported="true"
+            android:label="@string/remote_keys_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/remote_keys" />
+        </service>
 
         <receiver
             android:name=".HomeReceiver"

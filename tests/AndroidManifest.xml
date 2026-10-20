@@ -29,6 +29,7 @@
 <instrumentation android:name="io.freemytv.PreparedPreviewTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
 <instrumentation android:name="io.freemytv.PreparedPreviewDataTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
 <instrumentation android:name="io.freemytv.JavaPreviewPrototypeTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.SystemTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
 <instrumentation android:name="io.freemytv.ArtworkLifecycleTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
 <instrumentation android:name="io.freemytv.PlaybackDataTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
 <instrumentation android:name="io.freemytv.PlayerFlowTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />

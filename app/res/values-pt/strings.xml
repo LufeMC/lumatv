@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_keys_label">Botões do controle da LumaTV</string>
+    <string name="remote_keys_description">Abre o que você escolheu nos botões do controle e impede que botões de mídia perdidos abram outros apps. Só no modo LumaTV.</string>
+</resources>

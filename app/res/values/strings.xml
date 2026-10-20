@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">LumaTV</string>
+    <string name="remote_keys_label">LumaTV remote buttons</string>
+    <string name="remote_keys_description">Opens what you chose for your remote\'s buttons and stops stray media buttons from opening other apps. Only in LumaTV mode.</string>
 </resources>

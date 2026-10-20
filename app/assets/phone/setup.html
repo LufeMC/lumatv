@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0A0B0D">
+<title>LumaTV</title>
+<style>
+:root{--ink:#F5F3EF;--ink2:rgba(245,243,239,.72);--ink3:rgba(245,243,239,.66);--ink4:rgba(245,243,239,.56);--ground:#0A0B0D}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ground);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+body{min-height:100vh;display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top) + 28px) 20px calc(env(safe-area-inset-bottom) + 34px);
+  background:radial-gradient(120% 300px at 50% 0,#1B2236 0%,rgba(10,11,13,0) 100%) no-repeat,var(--ground)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer}
+header{height:24px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.mark{font-size:22px;line-height:24px;letter-spacing:-.04em;white-space:nowrap}
+.mark b{font-weight:600}.mark span{font-weight:300;color:var(--ink2)}
+.status{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:500;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dot{flex:none;width:8px;height:8px;border-radius:4px;background:var(--ink);box-shadow:0 0 0 4px rgba(245,243,239,.14)}
+h1{margin:56px 0 0;font-size:32px;line-height:1.1;font-weight:600;letter-spacing:-.025em}
+form{flex:1;display:flex;flex-direction:column;margin-top:40px}
+.fields{display:flex;flex-direction:column;gap:22px}
+label,legend{display:block;padding:0;font-size:15px;line-height:20px;font-weight:500;color:var(--ink2)}
+.box{position:relative;margin-top:8px;height:54px;border-radius:27px;background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+.box:focus-within{box-shadow:inset 0 0 0 2px var(--ink)}
+input[type=text],input[type=password]{display:block;width:100%;height:54px;padding:0 22px;border:0;border-radius:27px;background:transparent;color:var(--ink);font:17px system-ui,-apple-system,sans-serif;outline:none;-webkit-appearance:none;appearance:none}
+input::placeholder{color:rgba(245,243,239,.45)}
+#key{padding-right:56px}
+.eye{position:absolute;right:5px;top:5px;width:44px;height:44px;border-radius:22px;display:flex;align-items:center;justify-content:center;color:var(--ink3)}
+.hint{margin:8px 0 0;font-size:15px;line-height:20px;color:var(--ink4)}
+fieldset{margin:0;padding:0;border:0;min-width:0}
+.seg{margin-top:8px;display:flex;gap:4px;padding:4px;border-radius:27px;background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
+.seg label{position:relative;flex:1;height:46px;border-radius:23px;display:flex;align-items:center;justify-content:center;font-size:17px;color:var(--ink3);margin:0}
+.seg input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.seg label.on{background:rgba(255,255,255,.16);color:var(--ink);font-weight:600}
+.foot{margin-top:auto;padding-top:32px}
+.note{margin:0;font-size:15px;line-height:21px;color:var(--ink3)}
+.send{display:block;margin-top:16px;width:100%;height:56px;border-radius:28px;background:var(--ink);color:#0A0B0D;font-size:17px;font-weight:600;text-align:center}
+.send:disabled{opacity:.5}
+.result{margin:12px 0 0;min-height:21px;font-size:15px;line-height:21px;color:var(--ink)}
+</style>
+</head>
+<body data-tv="{{TV}}">
+<header>
+<div class="mark" role="img" aria-label="LumaTV"><b>Luma</b><span>TV</span></div>
+<div class="status" role="status"><span class="dot" aria-hidden="true"></span><span id="status-text"></span></div>
+</header>
+<h1 id="title"></h1>
+<form id="form" aria-labelledby="title" novalidate>
+<div class="fields">
+<div>
+<label for="key" id="key-label"></label>
+<div class="box">
+<input id="key" name="key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="key-hint">
+<button type="button" class="eye" id="eye"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+</div>
+<p class="hint" id="key-hint"></p>
+</div>
+<div>
+<label for="city" id="city-label"></label>
+<div class="box"><input id="city" name="city" type="text" autocomplete="address-level2"></div>
+</div>
+<div>
+<label for="country" id="country-label"></label>
+<div class="box"><input id="country" name="country" type="text" autocomplete="country-name"></div>
+</div>
+<fieldset>
+<legend id="unit-label"></legend>
+<div class="seg" id="seg">
+<label id="c-label"><input type="radio" name="unit" value="C">°C</label>
+<label id="f-label"><input type="radio" name="unit" value="F">°F</label>
+</div>
+</fieldset>
+</div>
+<div class="foot">
+<p class="note" id="note"></p>
+<button type="submit" class="send" id="send"></button>
+<p class="result" id="result" role="status"></p>
+</div>
+</form>
+<script>
+(function () {
+  var pt = /^pt/i.test(navigator.language || '');
+  var T = function (p, e) { return pt ? p : e; };
+  var tv = document.body.getAttribute('data-tv') || 'TV';
+  var key = new URLSearchParams(location.search).get('k') || '';
+  var $ = function (id) { return document.getElementById(id); };
+  document.documentElement.lang = pt ? 'pt-BR' : 'en';
+  $('status-text').textContent = T('Conectado à ', 'Connected to ') + tv;
+  $('title').textContent = T('Concluir a configuração', 'Finish setup');
+  $('key-label').textContent = T('Chave do TMDB', 'TMDB key');
+  $('key-hint').textContent = T('Grátis em themoviedb.org → Settings → API', 'Free from themoviedb.org → Settings → API');
+  $('city-label').textContent = T('Cidade', 'City');
+  $('country-label').textContent = T('País', 'Country');
+  $('unit-label').textContent = T('Temperatura', 'Temperature');
+  $('note').innerHTML = '';
+  [T('Fica salva na sua TV, criptografada.', 'Saved on your TV, encrypted.'), T('Nunca vai no arquivo do app.', 'Never put in the app file.')]
+    .forEach(function (s) { var span = document.createElement('span'); span.style.display = 'block'; span.textContent = s; $('note').appendChild(span); });
+  $('send').textContent = T('Enviar para a TV', 'Send to the TV');
+  $('eye').setAttribute('aria-label', T('Mostrar chave', 'Show key'));
+
+  function unit(v) {
+    ['C', 'F'].forEach(function (u) {
+      var l = $(u.toLowerCase() + '-label'); l.classList.toggle('on', u === v); l.querySelector('input').checked = u === v;
+    });
+  }
+  unit('C');
+  $('seg').addEventListener('change', function (e) { unit(e.target.value); });
+  $('eye').addEventListener('click', function () {
+    var k = $('key'); k.type = k.type === 'password' ? 'text' : 'password';
+    $('eye').setAttribute('aria-label', k.type === 'password' ? T('Mostrar chave', 'Show key') : T('Esconder chave', 'Hide key'));
+  });
+
+  function call(method, body) {
+    return fetch('/api/setup', { method: method, cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'X-Luma-Key': key }, body: body ? JSON.stringify(body) : undefined })
+      .then(function (r) { if (r.status === 403) throw new Error('expired'); return r.json(); });
+  }
+
+  // What the TV has now (never the key itself).
+  call('GET').then(function (v) {
+    if (v.hasKey) $('key').placeholder = T('Já salva na TV', 'Already saved on the TV');
+    if (v.city) $('city').value = v.city;
+    if (v.region) {
+      var name = v.region;
+      try { name = new Intl.DisplayNames([pt ? 'pt-BR' : 'en'], { type: 'region' }).of(v.region) || v.region; } catch (e) {}
+      $('country').value = name;
+    }
+    var t = (v.temperature || '').toUpperCase();
+    if (t === 'C' || t === 'F') unit(t);
+    else unit(/^en-US/i.test(navigator.language || '') ? 'F' : 'C');
+  }).catch(function () { $('result').textContent = T('Este link expirou: escaneie o código na TV de novo.', 'This link expired: scan the code on the TV again.'); });
+
+  var errors = {
+    key_format: T('Essa chave não parece do TMDB.', 'That doesn’t look like a TMDB key.'),
+    key_rejected: T('O TMDB não aceitou essa chave.', 'TMDB didn’t accept that key.'),
+    city_not_found: T('Não achei essa cidade nesse país.', 'Couldn’t find that city in that country.'),
+    city: T('Confira a cidade e o país.', 'Check the city and country.'),
+    empty: T('Preencha pelo menos um campo.', 'Fill in at least one field.'),
+    not_saved: T('A TV não conseguiu salvar. Tente de novo.', 'The TV couldn’t save it. Try again.')
+  };
+  $('form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var checked = document.querySelector('input[name=unit]:checked');
+    var body = { key: $('key').value.trim(), city: $('city').value.trim(), country: $('country').value.trim(), unit: checked ? checked.value : '', lang: pt ? 'pt' : 'en' };
+    $('send').disabled = true;
+    $('result').textContent = T('Enviando…', 'Sending…');
+    call('POST', body).then(function (r) {
+      if (r.ok) {
+        $('key').value = '';
+        $('key').placeholder = T('Já salva na TV', 'Already saved on the TV');
+        $('result').textContent = T('Pronto. A TV já está configurada.', 'Done. Your TV is set up.') + (r.city ? ' · ' + r.city : '');
+      } else {
+        $('result').textContent = errors[r.error] || T('Não deu certo. Tente de novo.', 'That didn’t work. Try again.');
+      }
+    }).catch(function () {
+      $('result').textContent = T('Sem conexão com a TV: escaneie o código de novo.', 'Can’t reach the TV: scan the code again.');
+    }).then(function () { $('send').disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>
