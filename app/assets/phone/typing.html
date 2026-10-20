@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0A0B0D">
+<title>LumaTV</title>
+<style>
+:root{--ink:#F5F3EF;--ink2:rgba(245,243,239,.72);--ink3:rgba(245,243,239,.66);--ground:#0A0B0D}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ground);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+body{min-height:100vh;padding:calc(env(safe-area-inset-top) + 28px) 20px 34px}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer}
+header{height:24px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.mark{font-size:22px;line-height:24px;letter-spacing:-.04em;white-space:nowrap}
+.mark b{font-weight:600}.mark span{font-weight:300;color:var(--ink2)}
+.status{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:500;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dot{flex:none;width:8px;height:8px;border-radius:4px;background:var(--ink);box-shadow:0 0 0 4px rgba(245,243,239,.14)}
+.off .dot{background:rgba(245,243,239,.35);box-shadow:none}
+.field{margin-top:20px;height:72px;border-radius:36px;background:rgba(255,255,255,.1);box-shadow:0 0 0 2px var(--ink);display:flex;align-items:center;gap:14px;padding:0 14px 0 24px}
+.field svg{flex:none;opacity:.7}
+input{flex:1;min-width:0;height:100%;background:none;border:0;outline:0;margin:0;padding:0;color:var(--ink);caret-color:var(--ink);font:600 30px/38px system-ui,-apple-system,sans-serif;letter-spacing:-.02em;-webkit-appearance:none;appearance:none}
+input::placeholder{color:rgba(245,243,239,.5)}
+.clear{flex:none;width:44px;height:44px;border-radius:22px;background:rgba(255,255,255,.12);display:none;align-items:center;justify-content:center;color:rgba(245,243,239,.8)}
+.has .clear{display:flex}
+h2{margin:24px 0 0;font-size:15px;line-height:20px;font-weight:500;color:var(--ink3)}
+ul{margin:8px 0 0;padding:0;list-style:none}
+li button{width:100%;min-height:74px;display:flex;align-items:center;gap:16px;padding:4px 0}
+li button:active{opacity:.6}
+.poster{flex:0 0 44px;width:44px;height:66px;border-radius:8px;object-fit:cover;display:block;background:#1A1B1F}
+.text{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.title{font-size:17px;line-height:22px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{font-size:15px;line-height:20px;color:var(--ink3)}
+.line{margin:24px 0 0;font-size:15px;line-height:20px;color:var(--ink3)}
+</style>
+</head>
+<body data-tv="{{TV}}">
+<header>
+<div class="mark" role="img" aria-label="LumaTV"><b>Luma</b><span>TV</span></div>
+<div class="status" id="status" role="status"><span class="dot" aria-hidden="true"></span><span id="status-text"></span></div>
+</header>
+
+<div class="field" id="field">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+<label for="q" id="q-label" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></label>
+<input id="q" type="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
+<button class="clear" id="clear" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</div>
+
+<section id="results-section" hidden>
+<h2 id="results-title"></h2>
+<ul id="results"></ul>
+</section>
+<p class="line" id="line"></p>
+
+<script>
+(function () {
+  var pt = /^pt/i.test(navigator.language || '');
+  var T = function (p, e) { return pt ? p : e; };
+  var tv = document.body.getAttribute('data-tv') || 'TV';
+  var key = new URLSearchParams(location.search).get('k') || '';
+  var q = document.getElementById('q'), field = document.getElementById('field');
+  var list = document.getElementById('results'), section = document.getElementById('results-section');
+  var line = document.getElementById('line'), status = document.getElementById('status');
+  document.documentElement.lang = pt ? 'pt-BR' : 'en';
+  document.getElementById('q-label').textContent = T('Buscar na ', 'Search on ') + tv;
+  document.getElementById('clear').setAttribute('aria-label', T('Limpar busca', 'Clear search'));
+  document.getElementById('results-title').textContent = T('Toque para abrir na TV', 'Tap to open on the TV');
+  q.placeholder = T('Filmes e séries', 'Movies and shows');
+
+  function connected(ok) {
+    status.classList.toggle('off', !ok);
+    document.getElementById('status-text').textContent = ok ? T('Conectado à ', 'Connected to ') + tv
+      : T('Sem conexão: escaneie o código de novo', 'Not connected: scan the code again');
+  }
+  connected(true);
+
+  function post(path, body) {
+    return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Luma-Key': key },
+      body: JSON.stringify(body), cache: 'no-store' }).then(function (r) {
+      if (r.status === 403) { connected(false); throw new Error('expired'); }
+      connected(true);
+      return r.json();
+    }, function (e) { connected(false); throw e; });
+  }
+
+  var seq = 0, timer = null;
+  function render(text, data) {
+    list.textContent = '';
+    var items = (data && data.results) || [];
+    items.forEach(function (r) {
+      var li = document.createElement('li'), b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('aria-label', T('Abrir ', 'Open ') + r.title + T(' na TV', ' on the TV'));
+      var img = document.createElement('img');
+      img.className = 'poster'; img.alt = ''; img.loading = 'lazy';
+      if (r.poster && r.poster.indexOf('https://image.tmdb.org/') === 0) img.src = r.poster;
+      var t = document.createElement('span'); t.className = 'text';
+      var a = document.createElement('span'); a.className = 'title'; a.textContent = r.title;
+      var m = document.createElement('span'); m.className = 'meta';
+      m.textContent = (r.year ? r.year + ' · ' : '') + (r.kind === 'series' ? T('Série', 'Series') : T('Filme', 'Movie'));
+      t.appendChild(a); t.appendChild(m); b.appendChild(img); b.appendChild(t); li.appendChild(b); list.appendChild(li);
+      b.addEventListener('click', function () {
+        post('/api/open', { id: r.id }).then(function (res) {
+          line.textContent = res.ok ? T('Abrindo na TV…', 'Opening on the TV…') : T('Abra a busca na TV primeiro.', 'Open search on the TV first.');
+        }).catch(function () {});
+      });
+    });
+    section.hidden = items.length === 0;
+    var needle = text.trim();
+    if (data && data.error === 'no_key') line.textContent = T('A TV ainda precisa da chave do TMDB para buscar.', 'The TV needs its TMDB key before it can search.');
+    else if (data && data.error === 'network') line.textContent = T('A TV não conseguiu buscar agora.', 'The TV couldn’t search right now.');
+    else line.textContent = items.length ? '' : needle ? T('Nada para “', 'No matches for “') + needle + '”' : T('Os resultados aparecem aqui e na TV', 'Results show here and on the TV');
+  }
+
+  function send() {
+    var text = q.value, mine = ++seq;
+    field.classList.toggle('has', text.length > 0);
+    post('/api/type', { text: text }).then(function (data) { if (mine === seq) render(text, data); }).catch(function () {});
+  }
+  q.addEventListener('input', function () {
+    field.classList.toggle('has', q.value.length > 0);
+    clearTimeout(timer); timer = setTimeout(send, 180);
+  });
+  q.addEventListener('keydown', function (e) { if (e.key === 'Enter') { clearTimeout(timer); send(); q.blur(); } });
+  document.getElementById('clear').addEventListener('click', function () { q.value = ''; send(); q.focus(); });
+  render('', null);
+  q.focus();
+})();
+</script>
+</body>
+</html>
