@@ -49,6 +49,15 @@ final class Backdrop {
         nightImage = night == null ? null : Bitmap.createBitmap(night, FW, FH, Bitmap.Config.ARGB_8888);
     }
 
+    static Backdrop background(Bitmap src) {
+        Bitmap base = card(src, GW, GH, false);
+        if (base != src) src.recycle();
+        int[] frost = reduce(base, FW, FH, 3, 3), glass = reduce(base, GW, GH, 2, 2);
+        base.recycle();
+        return new Backdrop(null, frost, null, null, null, whiten(frost.clone(), 0.82f),
+                whiten(glass.clone(), 0.74f), darken(frost.clone(), 0.76f), darken(glass, 0.56f));
+    }
+
     static Backdrop make(Bitmap src, boolean forLight) {
         Bitmap out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(out);
@@ -142,7 +151,8 @@ final class Backdrop {
     }
 
     /** The center of the photo at the card's aspect ratio, filtered down (halving while possible) to the exact size. */
-    private static Bitmap card(Bitmap full, int w, int h) {
+    private static Bitmap card(Bitmap full, int w, int h) { return card(full, w, h, true); }
+    private static Bitmap card(Bitmap full, int w, int h, boolean hardware) {
         float ratio = (float) w / h;
         int cw = Math.min(full.getWidth(), Math.round(full.getHeight() * ratio));
         int ch = Math.min(full.getHeight(), Math.round(cw / ratio));
@@ -154,7 +164,7 @@ final class Backdrop {
         }
         Bitmap out = Bitmap.createScaledBitmap(b, w, h, true);
         if (b != full && b != out) b.recycle();
-        return gpu(out);
+        return hardware ? gpu(out) : out;
     }
 
     /** Copies it to GPU memory (cheap to draw; the process doesn't keep the pixels). */

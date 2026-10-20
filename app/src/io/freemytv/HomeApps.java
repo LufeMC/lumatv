@@ -56,7 +56,7 @@ final class HomeApps {
 
     static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5;
     /** The "HDMI Inputs" button: opens the bottom drawer on the inputs (the home screen handles it). */
-    static final int INPUTS = 7;
+    static final int INPUTS = 7, SEARCH = 8;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 
@@ -91,7 +91,7 @@ final class HomeApps {
         {"globoplay", "Globoplay", "com.globo.globotv", "FF5A1F", "tint", "1"},
         {"spotify", "Spotify", "com.spotify.tv.android", "1DB954", "", "1"},
     };
-    private static final int MAX_SHELF = 8;
+    static final int MAX_SHELF = 8;
     /** Live TV apps of some brands (the antenna's channels open through the standard Android request first). */
     static final String[] LIVE_TV_APPS = {"com.tcl.tv", "com.google.android.tv", "com.mediatek.wwtv.tvcenter", "com.sony.dtv.tvx"};
     /** Kept out of "All Apps" (only hidden, still installed). Add the ones your TV shows that you never use. */
@@ -114,22 +114,81 @@ final class HomeApps {
     static List<Item> shelf(Context c, boolean extract) {
         List<Item> items = new ArrayList<>();
         PackageManager pm = c.getPackageManager();
-        for (String[] d : SHELF) {
-            if (items.size() >= MAX_SHELF) break;
-            if (launchIntent(pm, d[2]) == null) continue;
+        for (String pkg : shelfPackages(c)) {
+            String[] d = null;
+            for (String[] candidate : SHELF) if (candidate[2].equals(pkg)) d = candidate;
             Item it = new Item();
             it.kind = APP;
-            it.key = d[0];
-            it.label = d[1];
-            it.pkg = d[2];
-            it.tile = appTile(c, d[0], d[2], 0xFF000000 | Integer.parseInt(d[3], 16));
-            it.logo = shelfLogo(c, d[0], d[2], d[4], extract);
-            if (it.logo != null) it.logoInk = ink(it.logo);
-            it.logoDark = ownLogoCached(c, d[0] + "-dark");
-            it.logoScale = Float.parseFloat(d[5]);
+            it.pkg = pkg;
+            it.key = d == null ? pkg : d[0];
+            it.label = d == null ? appLabel(c, pkg) : d[1];
+            it.tile = appTile(c, it.key, pkg, d == null ? 0 : 0xFF000000 | Integer.parseInt(d[3], 16));
+            if (d != null) {
+                it.logo = shelfLogo(c, d[0], pkg, d[4], extract);
+                if (it.logo != null) it.logoInk = ink(it.logo);
+                it.logoDark = ownLogoCached(c, d[0] + "-dark");
+                it.logoScale = Float.parseFloat(d[5]);
+            }
             items.add(it);
         }
         return items;
+    }
+
+    /** An empty saved list is valid. Missing or damaged settings use the original order. */
+    static List<String> shelfPackages(Context c) {
+        String saved = c.getSharedPreferences("home-apps", Context.MODE_PRIVATE).getString("packages", null);
+        List<String> requested = new ArrayList<>();
+        if (saved != null) {
+            try {
+                org.json.JSONArray array = new org.json.JSONArray(saved);
+                for (int i = 0; i < array.length(); i++) requested.add(array.getString(i));
+            } catch (org.json.JSONException e) {
+                saved = null;
+                requested.clear();
+            }
+        }
+        if (saved == null) for (String[] d : SHELF) requested.add(d[2]);
+        List<String> result = new ArrayList<>();
+        for (String pkg : requested) {
+            if (result.size() == MAX_SHELF) break;
+            if (!result.contains(pkg) && !pkg.equals(c.getPackageName()) && launchIntent(c.getPackageManager(), pkg) != null)
+                result.add(pkg);
+        }
+        return result;
+    }
+
+    /** Call from a worker thread. Save only after the user selects Save. */
+    static boolean saveShelf(Context c, List<String> packages) {
+        if (packages.size() > MAX_SHELF || new HashSet<>(packages).size() != packages.size()) return false;
+        for (String pkg : packages) {
+            if (pkg.equals(c.getPackageName()) || launchIntent(c.getPackageManager(), pkg) == null) return false;
+        }
+        return c.getSharedPreferences("home-apps", Context.MODE_PRIVATE).edit()
+                .putString("packages", new org.json.JSONArray(packages).toString()).commit();
+    }
+
+    static String appLabel(Context c, String pkg) {
+        try {
+            return c.getPackageManager().getApplicationLabel(c.getPackageManager().getApplicationInfo(pkg, 0)).toString();
+        } catch (PackageManager.NameNotFoundException e) {
+            return pkg;
+        }
+    }
+
+    /** Return app names without loading images. The editor loads this list in the background. */
+    static List<Item> editableApps(Context c) {
+        PackageManager pm = c.getPackageManager();
+        Intent query = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
+        List<Item> result = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (ResolveInfo ri : pm.queryIntentActivities(query, 0)) {
+            String pkg = ri.activityInfo.packageName;
+            if (pkg.equals(c.getPackageName()) || !seen.add(pkg) || launchIntent(pm, pkg) == null) continue;
+            Item item = app(pkg, appLabel(c, pkg));
+            result.add(item);
+        }
+        Collections.sort(result, (a, b) -> a.label.compareToIgnoreCase(b.label));
+        return result;
     }
 
     /** Live TV, the HDMI inputs with a device sending a signal, and All Apps. */
@@ -244,7 +303,7 @@ final class HomeApps {
     static List<Item> others(Context c) {
         PackageManager pm = c.getPackageManager();
         Set<String> skip = new HashSet<>();
-        for (String[] d : SHELF) skip.add(d[2]);
+        skip.addAll(shelfPackages(c));
         skip.addAll(java.util.Arrays.asList(LIVE_TV_APPS));
         skip.add(c.getPackageName());
         skip.addAll(HIDDEN);
@@ -289,6 +348,9 @@ final class HomeApps {
                 break;
             case SETTINGS:
                 intent = new Intent().setComponent(new ComponentName(a, SettingsActivity.class));
+                break;
+            case SEARCH:
+                intent = new Intent(a, SearchActivity.class);
                 break;
             case ANDROID_SETTINGS:
                 intent = new Intent(Settings.ACTION_SETTINGS);

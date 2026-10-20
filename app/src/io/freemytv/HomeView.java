@@ -2,6 +2,7 @@ package io.freemytv;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BlurMaskFilter;
@@ -90,6 +91,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final int Z_TOP = 4, Z_CARDS = 5;
 
     private final Activity activity;
+    private final ContinueRow continueRow;
+    private static final int Z_CONTINUE = 6;
     private final Scene scene = new Scene();
     private final HomeData data;
     private final Recs recs;
@@ -98,7 +101,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final SharedPreferences ui;
     private final TvInputManager tvInputs;
     private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer;
-    private int zone = Z_SHELF;
+    private int zone = Z_TOP;
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
     private static final long NIGHT_MS = 2000;
@@ -111,10 +114,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Shader nightGradient;
 
     // At the top: tabs (0 to 2) and icon-only buttons (3 to 5); the three cards
-    private int tab, topIndex, cardIndex;
+    private int tab, topIndex = 6, cardIndex;
     private List<Recs.Pick> cards = new ArrayList<>();
-    private final Spring[] topFocus = new Spring[6];
-    private final RectF[] topRects = new RectF[6];
+    private final Spring[] topFocus = new Spring[7];
+    private final RectF[] topRects = new RectF[7];
     private final Spring[] cardFocus = new Spring[3];
     private final RectF[] cardRects = new RectF[3];
     private final List<HomeApps.Item> lightButtons = new ArrayList<>();
@@ -189,11 +192,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean running, tilesDirty, statusDirty, heroDirty, drawerDirty, gridDirty, motionDirty = true;
     private boolean drawerWasMoving;
     private long lastNanos, resumedAt, lastStep;
+    private boolean frameScheduled;
+    long frameCount;
+    private final Runnable idleFrame = () -> wakeFrames();
     private int w, h;
     private float k = 1;
     private String clockText = "";
     private long clockMinute = -1;
     private boolean okDown, backDown;
+    private final Runnable editApps = () -> openAppEditor();
+
+    private void openAppEditor() {
+        if (okDown && running && !sheetOpen && zone == Z_SHELF && !shelf.isEmpty()) {
+            okDown = false;
+            handler.removeCallbacks(editApps);
+            activity.startActivity(new Intent(activity, AppsActivity.class).putExtra("package", shelf.get(shelfIndex).pkg));
+        }
+    }
 
     private Paint labelPaint, metaPaint, clockPaint, buttonPaint, capsuleText, tipPaint, quotePaint, staleQuote;
     private Paint rowTitle, drawerLabel, cardTitle, cardText, cardDim, cardDimRight, bigTemp, hourPaint, hourTemp;
@@ -267,6 +282,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (!running) return;
             data.refreshIfStale();
             recs.refreshIfStale();
+            refreshContinue();
             checkNotices();
             updatePalette();
             checkNight(true);
@@ -296,7 +312,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, sheetLayer}) v.setLayerType(LAYER_TYPE_HARDWARE, null);
         for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, toastLayer}) addView(v);
         drawerLayer.setVisibility(INVISIBLE);
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < topFocus.length; i++) {
             topFocus[i] = new Spring(0.26f, 0.85f, 0);
             topRects[i] = new RectF();
         }
@@ -304,23 +320,26 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             cardFocus[i] = new Spring(0.32f, 0.78f, 0);
             cardRects[i] = new RectF();
         }
+        continueRow = new ContinueRow(a, up -> {
+            zone = up ? Z_TOP : Z_SHELF; if (up) topIndex = 6;
+            requestFocus(); retarget(false);
+        });
+        addView(continueRow); continueRow.setVisibility(INVISIBLE);
         makeLightButtons();
         recs.setLight(true);
         checkNight(false);
         sheetLayer.setVisibility(INVISIBLE);
         scene.setMotion(0.6f, 0f);
         updatePalette();
-        // First time: right away (a cold start opens with the apps already there); missing logos come from reload().
-        setShelf(HomeApps.shelf(a, false));
-        setStatusItems(statusList(a));
-        setDrawerItems(drawerList(a));
+        // Package queries and image decoding run in reload() after the first frame.
     }
 
     // MARK: - Lifecycle (called by HomeActivity)
 
     void resume() {
         if (running) return;
-        running = true;
+        running = true; continueRow.resume();
+        for (View layer : new View[]{heroLayer, status, platter, tiles, drawerLayer, sheetLayer}) layer.setLayerType(LAYER_TYPE_HARDWARE, null);
         checkNight(false);
         resumedAt = SystemClock.uptimeMillis();
         lastNanos = 0;
@@ -333,33 +352,41 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         handler.postDelayed(tick, 15_000);
         checkNotices();
         reload();
+        refreshContinue();
         updatePalette();
         updatePicks();
         if (sheetOpen) closeSheet();
         sheet.snap(sheet.target);
         motionDirty = true;
         invalidateAll();
-        Choreographer.getInstance().postFrameCallback(this);
+        wakeFrames();
     }
 
     void pause() {
         if (!running) return;
         running = false;
+        okDown = false;
+        handler.removeCallbacks(editApps);
         Choreographer.getInstance().removeFrameCallback(this);
+        handler.removeCallbacks(idleFrame); frameScheduled = false;
         handler.removeCallbacks(tick);
         data.removeListener(this);
         recs.removeListener(this);
+        recs.trimArtwork(); continueRow.pause(); TitleArtwork.trimMemory();
+        for (View layer : new View[]{heroLayer, status, platter, tiles, drawerLayer, sheetLayer}) layer.setLayerType(LAYER_TYPE_NONE, null);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
     }
 
     void destroy() {
         pause();
         click.release();
+        continueRow.release();
     }
 
     /** Starting state (Home pressed while the home screen is showing): first app focused, drawer and sheet closed. */
     void reset(boolean animated) {
-        zone = Z_SHELF;
+        zone = Z_TOP;
+        topIndex = 6;
         shelfIndex = 0;
         sheetOpen = false;
         drawerOpen = false;
@@ -385,6 +412,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lightButtons.add(HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("TV aberta", "Live TV"), "live_tv"));
         lightButtons.add(HomeApps.action(HomeApps.INPUTS, "inputs", Ui.tr("Entradas HDMI", "HDMI Inputs"), "hdmi"));
         lightButtons.add(HomeApps.action(HomeApps.SETTINGS, "settings", Ui.tr("Configurações", "Settings"), "settings"));
+        lightButtons.add(HomeApps.action(HomeApps.SEARCH, "search", Ui.tr("Buscar", "Search"), "search"));
     }
 
     private static String[] tabs() {
@@ -392,6 +420,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     @Override public void onData() {
+        wakeFrames();
         updatePalette();
         checkNight(true);
         layoutStatus();
@@ -400,12 +429,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     @Override public void onRecs() {
+        wakeFrames();
         updatePicks();
     }
 
     private void invalidateAll() {
         for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer}) v.invalidate();
     }
+
+    private boolean hasContinue() { return tab == 0 && continueRow.available(); }
+    private void refreshContinue() {
+        continueRow.refresh(() -> {
+            if (!running) return;
+            if (hasContinue() && zone == Z_CARDS) { zone = Z_CONTINUE; continueRow.focus(); }
+            heroDirty = true; updateMotion(); retarget(false);
+        });
+    }
+    private void enterContinue() { zone = Z_CONTINUE; continueRow.setVisibility(VISIBLE); continueRow.focus(); }
 
     // MARK: - Size and layers
 
@@ -420,6 +460,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         measure(platter, width, Math.round(320 * kk));
         measure(tiles, width, Math.round(270 * kk));
         measure(drawerLayer, width, Math.round(600 * kk));
+        measure(continueRow, Math.round(1760 * kk), Math.round(520 * kk));
         measure(sheetLayer, width, height);
         measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
         setMeasuredDimension(width, height);
@@ -438,6 +479,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         place(platter, 0, Math.round(750 * kk));
         place(tiles, 0, Math.round(790 * kk));
         place(drawerLayer, 0, Math.round(470 * kk));
+        continueRow.layout(Math.round(80 * kk), Math.round(262 * kk), Math.round(1840 * kk), Math.round(782 * kk));
         sheetLayer.layout(0, 0, width, height);
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
@@ -533,8 +575,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // MARK: - Frames: 60 per second while something moves; nothing is redrawn when still
 
+    private void wakeFrames() {
+        if (!running || frameScheduled) return;
+        handler.removeCallbacks(idleFrame); frameScheduled = true;
+        Choreographer.getInstance().postFrameCallback(this);
+    }
     @Override public void doFrame(long frameTimeNanos) {
+        frameScheduled = false;
         if (!running) return;
+        frameCount++;
         float dt = lastNanos == 0 ? 1 / 60f : Math.min(0.05f, (frameTimeNanos - lastNanos) / 1e9f);
         lastNanos = frameTimeNanos;
         long up = SystemClock.uptimeMillis();
@@ -579,9 +628,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
         // Busy: something is moving, or the sheet or the drawer is open.
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
-                || sheetMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
-                || drawerOpen || drawer.value > 0.001f;
-        Choreographer.getInstance().postFrameCallback(this);
+                || sheetMoving || toastFading || heroFading || bgFading || nightMoving;
+        if (busy) wakeFrames();
+        else {
+            lastNanos = 0;
+            long delay = 60000 - Math.floorMod(System.currentTimeMillis(), 60000);
+            if (toast != null) delay = Math.min(delay, Math.max(1, toastAt + TOAST_MS - 450 - up));
+            handler.postDelayed(idleFrame, delay);
+        }
     }
 
     private static boolean step(Spring[] springs, float dt) {
@@ -596,6 +650,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float home = 1 - s, top = home * (1 - smoothstep(0, 0.32f, dc));
         float shift = SHIFT * k;
         float lift = -d * shift;
+        continueRow.setVisibility(hasContinue() && !sheetOpen && !drawerOpen ? VISIBLE : INVISIBLE);
+        continueRow.setAlpha(top); continueRow.setTranslationY(lift);
         show(heroLayer, top, lift);
         show(status, top, lift);
         show(platter, home, lift);
@@ -714,8 +770,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         long up = SystemClock.uptimeMillis();
         // In the middle of another swap, start from whichever is more visible.
         if (bgFadeAt == 0 || fadeEase(bgFadeAt, up) >= 0.5f) bgFrom = bgTo;
+        boolean firstImage = bgTo == null && bgFrom == null && b != null;
         bgTo = b;
-        bgFadeAt = up;
+        bgFadeAt = firstImage ? 0 : up;
+        if (firstImage) { sky.invalidate(); platter.invalidate(); }
         nightPair = false;
         if (b == null || glassOf(b) == null) return;
         if (bgFrom == null || glassOf(bgFrom) == null) {
@@ -823,6 +881,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Text colors for the current night value (dark by day, white at night). */
     private void applyTone() {
+        continueRow.tone(night >= 0.5f);
         lTitle.setColor(tone(L_INK, WHITE));
         lTab.setColor(tone(L_DIM, 0xFF8E8E93));
         lTabOn.setColor(tone(L_INK, WHITE));
@@ -980,6 +1039,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean same = list.size() == shelf.size();
         for (int i = 0; same && i < list.size(); i++) same = list.get(i).key.equals(shelf.get(i).key);
         shelf = list;
+        if (list.isEmpty() && zone == Z_SHELF) { zone = Z_TOP; topIndex = 6; }
         if (!same || tileFocus.length != list.size()) {
             tileFocus = new Spring[list.size()];
             tileRects = new RectF[list.size()];
@@ -1031,7 +1091,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         Paint text = lQuote;
         // The corner buttons' names appear in this row: the quotes fade out while one of them has focus.
         float fade = 1;
-        for (int i = 3; i < 6; i++) fade = Math.min(fade, 1 - Ui.clamp(topFocus[i].value));
+        for (int i = 3; i < topFocus.length; i++) fade = Math.min(fade, 1 - Ui.clamp(topFocus[i].value));
         if (fade <= 0.01f) return;
         int textColor = text.getColor();
         text.setColor(Ui.alpha(textColor, fade));
@@ -1394,6 +1454,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Sets the springs' targets from the current focus (snap: no animation). */
     private void retarget(boolean snap) {
+        wakeFrames();
         // Only the group whose focus changed is redrawn (moving along the shelf doesn't redraw the hero or capsule).
         boolean tilesChanged = aim(tileFocus, !sheetOpen && zone == Z_SHELF ? shelfIndex : -1, snap);
         boolean statusChanged = aim(statusFocus, !sheetOpen && zone == Z_STATUS ? statusIndex : -1, snap);
@@ -1535,7 +1596,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Toasts
 
     void showToast(String text) {
-        toasts.add(text);
+        toasts.add(text); wakeFrames();
     }
 
     /** Advances the toast queue; returns true while a toast fades in or out (animation). */
@@ -1620,6 +1681,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 setStatusItems(st);
                 setDrawerItems(d);
                 if (!sheetOpen) setOthers(o);
+                wakeFrames();
             });
         });
     }
@@ -1627,8 +1689,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Keys: only the arrows, OK and Back (system keys pass through to the system)
 
     boolean onKey(KeyEvent e) {
+        wakeFrames();
+        if (zone == Z_CONTINUE && continueRow.hasFocus()) return false;
         boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
         switch (e.getKeyCode()) {
+            case KeyEvent.KEYCODE_SEARCH:
+                if (down && e.getRepeatCount() == 0) activity.startActivity(new Intent(activity, SearchActivity.class));
+                return true;
             case KeyEvent.KEYCODE_DPAD_LEFT:
                 if (down) move(-1, 0);
                 return true;
@@ -1647,8 +1714,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 // Opens on release, and only if the press happened here: the release of an OK pressed inside another
                 // app opens nothing.
                 if (down) {
-                    if (e.getRepeatCount() == 0) okDown = true;
+                    if (e.getRepeatCount() == 0) {
+                        okDown = true;
+                        handler.postDelayed(editApps, 650);
+                    } else if (e.isLongPress()) {
+                        openAppEditor();
+                    }
                 } else {
+                    handler.removeCallbacks(editApps);
                     if (okDown && !e.isCanceled()) activate();
                     okDown = false;
                 }
@@ -1672,8 +1745,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_DRAWER) {
             closeDrawer();
             retarget(false);
-        } else if (zone != Z_SHELF) {
-            zone = Z_SHELF;
+        } else if (zone != Z_TOP || topIndex != 6) {
+            zone = Z_TOP; topIndex = 6;
             retarget(false);
         } else {
             return;
@@ -1793,8 +1866,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_HERO) {
             Recs.Pick p = currentPick();
             if (p == null || p.pkg == null) return;
-            it = HomeApps.app(p.pkg, Recs.serviceName(p));
-            r = heroButton;
+            activity.startActivity(new Intent(activity, SearchActivity.class)
+                    .putExtra("title_id", p.id).putExtra("title_kind", p.kind).putExtra("title_name", p.title));
+            return;
         } else if (zone == Z_STATUS) {
             if (statusItems.isEmpty()) return;
             it = statusItems.get(statusIndex);
@@ -1813,8 +1887,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_CARDS) {
             Recs.Pick p = cardIndex < cards.size() ? cards.get(cardIndex) : null;
             if (p == null || p.pkg == null) return;
-            it = HomeApps.app(p.pkg, Recs.serviceName(p));
-            r = cardRects[cardIndex];
+            activity.startActivity(new Intent(activity, SearchActivity.class)
+                    .putExtra("title_id", p.id).putExtra("title_kind", p.kind).putExtra("title_name", p.title));
+            return;
         } else {
             if (shelf.isEmpty()) return;
             it = shelf.get(shelfIndex);
@@ -1854,9 +1929,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             x = topRects[i].right + 4 * k;
         }
         float b = L_BUTTON * k, right = CONTENT_R * k, cy = L_BUTTON_CY * k;
-        for (int i = 2; i >= 0; i--) {
-            topRects[3 + i].set(right - b, cy - b / 2, right, cy + b / 2);
-            right -= b + L_BUTTON_GAP * k;
+        for (int i = lightButtons.size() - 1; i >= 0; i--) {
+            float width = i == 3 ? 230 * k : b;
+            topRects[3 + i].set(right - width, cy - b / 2, right, cy + b / 2);
+            right -= width + L_BUTTON_GAP * k;
         }
         float top = L_CARDS_TOP * k, ch = L_CARD_H * k, g = L_CARD_GAP * k, left = MARGIN * k, tall = L_TALL_W * k;
         float wide = (CONTENT_R - MARGIN) * k - 2 * tall - 2 * g;
@@ -1877,8 +1953,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 retarget(false);
             }
         }
-        for (Recs.Pick p : recs.wanted()) recs.backdrop(p);   // all three tabs preloaded: switching tabs is instant
-        Backdrop b = cards.isEmpty() ? null : recs.backdrop(cards.get(0));
+        if (!hasContinue()) for (Recs.Pick p : cards) recs.backdrop(p);
+        Backdrop b = cards.isEmpty() ? null : hasContinue() ? recs.background(cards.get(0)) : recs.backdrop(cards.get(0));
         if (cards.isEmpty() || b != null) showBackdrop(b);
         heroDirty = true;
     }
@@ -1957,9 +2033,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
         int top = -1;
+        if (!hasContinue()) {
         for (int i = 0; i < 3; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
         for (int i = 0; i < 3; i++) if (i != top) drawLightCard(c, i);
         if (top >= 0) drawLightCard(c, top);
+        }
         drawQuotes(c);
     }
 
@@ -2023,22 +2101,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private void drawLightButtons(Canvas c) {
         applyTone();
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < lightButtons.size(); i++) {
             RectF r = topRects[3 + i];
-            float f = Ui.clamp(topFocus[3 + i].value), s = 1 + 0.1f * f, rad = r.width() / 2 * s;
-            cell.set(r.centerX() - rad, r.centerY() - rad, r.centerX() + rad, r.centerY() + rad);
-            tmp.set(cell);
-            tmp.offset(0, (6 + 8 * f) * k);
-            shadow.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.3f) + tone(0.14f, 0.2f) * f));
-            c.drawRoundRect(tmp, rad, rad, shadow);
-            scene.liquid(c, cell, rad, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
-                    tone(0.6f, 0.45f), 1 - f);
-            if (f > 0.01f) {
-                fill.setShader(null);
-                fill.setColor(Ui.alpha(0xFFFFFFFF, f));
-                c.drawCircle(cell.centerX(), cell.centerY(), rad, fill);
+            if (i == 3) {
+                float focus = Ui.clamp(topFocus[6].value);
+                fill.setShader(null); fill.setColor(blend(tone(0xD9FFFFFF, 0xFF36363C), 0xFFFFFFFF, focus));
+                c.drawRoundRect(r, r.height() / 2, r.height() / 2, fill);
+                int ink = blend(tone(L_INK, 0xFFF5F5F7), L_INK, focus);
+                Symbols.draw(getContext(), c, "search", r.left + 38 * k, r.centerY(), 28 * k, ink);
+                lTabOn.setColor(ink);
+                c.drawText(Ui.tr("Buscar", "Search"), r.left + 66 * k, r.centerY() + Ui.halfCap(lTabOn), lTabOn);
+                continue;
             }
-            Symbols.draw(getContext(), c, lightButtons.get(i).symbol, cell.centerX(), cell.centerY(), 27 * k * s,
+            float f = Ui.clamp(topFocus[3 + i].value), rad = r.width() / 2;
+            cell.set(r); fill.setShader(null); fill.setColor(Ui.alpha(0xFFFFFFFF, f));
+            if (f > 0.01f) c.drawRoundRect(cell, rad, rad, fill);
+            Symbols.draw(getContext(), c, lightButtons.get(i).symbol, cell.centerX(), cell.centerY(), 27 * k,
                     blend(tone(L_INK, 0xEBFFFFFF), L_INK, f));
             if (f > 0.01f) {
                 String label = lightButtons.get(i).label;
@@ -2053,10 +2131,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean moveLight(int dx, int dy) {
         switch (zone) {
             case Z_SHELF:
-                if (dy >= 0 || shelf.isEmpty()) return false;
-                if (cards.isEmpty()) {
+                if (dy >= 0) return false;
+                if (hasContinue()) { enterContinue(); break; }
+                if (shelf.isEmpty() || cards.isEmpty()) {
                     zone = Z_TOP;
-                    topIndex = tab;
+                    topIndex = 6;
                 } else {
                     zone = Z_CARDS;
                     cardIndex = nearest(cardRects, cards.size(), tileRects[shelfIndex].centerX());
@@ -2069,7 +2148,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     cardIndex = next;
                 } else if (dy < 0) {
                     zone = Z_TOP;
-                    topIndex = tab;     // as on Apple TV: moving up to the tabs focuses the selected tab
+                    topIndex = 6;
                 } else {
                     zone = Z_SHELF;
                     if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, cardRects[cardIndex].centerX());
@@ -2077,19 +2156,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_TOP:
                 if (dx != 0) {
-                    int next = Math.max(0, Math.min(5, topIndex + dx));
+                    int next = Math.max(0, Math.min(topRects.length - 1, topIndex + dx));
                     if (next == topIndex) return true;
                     topIndex = next;
                     if (topIndex < 3) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
                 } else if (dy > 0) {
-                    if (cards.isEmpty()) {
+                    if (hasContinue()) { enterContinue();
+                    } else if (cards.isEmpty()) {
                         zone = Z_SHELF;
                     } else {
                         zone = Z_CARDS;
                         cardIndex = nearest(cardRects, cards.size(), topRects[topIndex].centerX());
                     }
                 } else {
-                    return true;
+                    topIndex = 6;
                 }
                 break;
             default:

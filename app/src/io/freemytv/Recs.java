@@ -102,6 +102,7 @@ final class Recs {
     private volatile int period = -1;
     private volatile long listAt;
     private volatile boolean fetching;
+    private volatile int artworkEpoch;
     private volatile String error = "";
     private volatile boolean light;     // light design: builds only the cards (all three tabs' cards fit in memory)
     private volatile long failedAt, keyStamp;
@@ -199,19 +200,23 @@ final class Recs {
     }
 
     /** The pick's ready backdrop (or null: builds it in the background and notifies when it's ready). */
-    Backdrop backdrop(Pick p) {
+    Backdrop backdrop(Pick p) { return backdrop(p, false); }
+    Backdrop background(Pick p) { return backdrop(p, true); }
+    private Backdrop backdrop(Pick p, boolean backgroundOnly) {
         if (p == null || p.backdrop == null) return null;
-        final String key = p.backdrop;    // the details may swap the image midway
+        final String key = (backgroundOnly ? "background:" : "cards:") + p.backdrop;
+        final int epoch = artworkEpoch;
+        final String pendingKey = epoch + ":" + key;
         synchronized (images) {
             Backdrop b = images.get(key);
             if (b != null) return b;
-            if (!pending.add(key)) return null;
+            if (!pending.add(pendingKey)) return null;
         }
         io.execute(() -> {
             try {
-                loadImage(p);
+                if (epoch == artworkEpoch) loadImage(p, epoch, key, backgroundOnly);
             } finally {
-                synchronized (images) { pending.remove(key); }
+                synchronized (images) { pending.remove(pendingKey); }
             }
         });
         return null;
@@ -583,9 +588,12 @@ final class Recs {
     }
 
     /** Reads the original (≥ 1920 wide) and builds the backdrop (Backdrop: cards plus frosted and glass versions). */
-    private void loadImage(Pick p) {
+    void trimArtwork() {
+        artworkEpoch++; synchronized (images) { images.clear(); }
+    }
+    private void loadImage(Pick p, int epoch, String cacheKey, boolean backgroundOnly) {
         synchronized (images) {
-            if (images.containsKey(p.backdrop)) return;
+            if (images.containsKey(cacheKey)) return;
         }
         File f = imageFile(p);
         try {
@@ -595,16 +603,18 @@ final class Recs {
             BitmapFactory.decodeFile(f.getPath(), bounds);
             BitmapFactory.Options opts = new BitmapFactory.Options();
             opts.inSampleSize = 1;
-            while (bounds.outWidth / (opts.inSampleSize * 2) >= Backdrop.W) opts.inSampleSize *= 2;
+            int target = backgroundOnly ? Backdrop.GW : Backdrop.W;
+            while (bounds.outWidth / (opts.inSampleSize * 2) >= target) opts.inSampleSize *= 2;
             Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
             if (b == null) throw new IOException("unreadable image");
             AppLog.w("backdrop \u201c" + p.title + "\u201d: " + bounds.outWidth + "×" + bounds.outHeight);
+            if (epoch != artworkEpoch) { b.recycle(); return; }
             boolean forLight = light;
-            Backdrop backdrop = Backdrop.make(b, forLight);
-            if (forLight != light) return;   // the design changed midway: this one is stale
+            Backdrop backdrop = backgroundOnly ? Backdrop.background(b) : Backdrop.make(b, forLight);
+            if (forLight != light || epoch != artworkEpoch) return;   // the design changed midway: this one is stale
             synchronized (images) {
-                images.put(p.backdrop, backdrop);
-                while (images.size() > (forLight ? 10 : 4)) images.remove(images.keySet().iterator().next());
+                images.put(cacheKey, backdrop);
+                while (images.size() > 4) images.remove(images.keySet().iterator().next());
             }
             notifyListeners();
         } catch (IOException | RuntimeException | OutOfMemoryError e) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds FreeMyTV.apk without Gradle: aapt2 -> javac -> d8 -> zipalign -> apksigner.
-# Needs a JDK (17+) and the Android SDK command-line tools (build-tools 34+, platform android-34). See README.md.
+# Needs JDK 17, Python 3, Android platform 36, and Android build tools 36.0.0.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -13,9 +13,9 @@ if [ -z "$SDK" ]; then
   done
 fi
 [ -n "$SDK" ] && [ -d "$SDK/build-tools" ] || { echo "Android SDK not found. Install it and set ANDROID_HOME (see README)."; exit 1; }
-BT="$SDK/build-tools/$(ls "$SDK/build-tools" | sort -V | tail -1)"
-AJ="$(ls -d "$SDK"/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -1 || true)"
-[ -f "${AJ:-}" ] || { echo "Android platform not found. Run: sdkmanager \"platforms;android-34\""; exit 1; }
+BT="$SDK/build-tools/36.0.0"
+AJ="$SDK/platforms/android-36/android.jar"
+[ -x "$BT/d8" ] && [ -f "$AJ" ] || { echo 'Install Android build tools 36.0.0 and Android platform 36.'; exit 1; }
 JAVAC="${JAVA_HOME:+$JAVA_HOME/bin/}javac"
 KEYTOOL="${JAVA_HOME:+$JAVA_HOME/bin/}keytool"
 command -v "$JAVAC" >/dev/null 2>&1 || { echo "JDK not found. Install JDK 17 and set JAVA_HOME."; exit 1; }
@@ -61,14 +61,16 @@ final class Config {
 EOF
 
 # --- Build
+source ./player-dependencies.sh
 "$BT/aapt2" compile --dir app/res -o out/res.zip
 # Fonts uncompressed: Android reads them straight from the APK.
-"$BT/aapt2" link -o out/base.apk -I "$AJ" --manifest app/AndroidManifest.xml --java out/gen out/res.zip \
-  --min-sdk-version 31 --target-sdk-version 33 -A app/assets -0 ttf
-"$JAVAC" -nowarn -Xlint:-options -source 8 -target 8 -bootclasspath "$AJ:$BT/core-lambda-stubs.jar" -classpath "$AJ" \
+"$BT/aapt2" link -o out/base.apk -I "$AJ" --manifest app/AndroidManifest.xml --java out/gen --auto-add-overlay \
+  --extra-packages "$PLAYER_PACKAGES" "${PLAYER_RES[@]}" out/res.zip \
+  --min-sdk-version 30 --target-sdk-version 33 -A app/assets -0 ttf
+"$JAVAC" -nowarn -Xlint:-options -source 8 -target 8 -bootclasspath "$AJ:$BT/core-lambda-stubs.jar" -classpath "$AJ:$PLAYER_CP" \
   -d out/classes $(find app/src out/gen -name '*.java')
-"$BT/d8" --release --min-api 31 --lib "$AJ" --output out $(find out/classes -name '*.class')
-(cd out && zip -qj base.apk classes.dex)
+"$BT/d8" --release --min-api 30 --lib "$AJ" --output out $(find out/classes -name '*.class') $(find out/player/jars -name '*.jar')
+(cd out && zip -qj base.apk classes*.dex)
 "$BT/zipalign" -f -p 4 out/base.apk out/aligned.apk
 
 # --- Sign with your own key (created once; updates need the same key, so keep freemytv.keystore)

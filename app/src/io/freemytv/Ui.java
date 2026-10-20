@@ -33,6 +33,9 @@ final class Ui {
     static synchronized void init(Context c) {
         if (loaded) return;
         loaded = true;
+        TitleArtwork.init(c);
+        MetadataCache.init(c);
+        ThumbnailCache.init(c);
         AssetManager a = c.getAssets();
         thin = font(a, 32, 200);
         light = font(a, 32, 300);

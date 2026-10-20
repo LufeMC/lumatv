@@ -1,0 +1,33 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.freemytv.tests">
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="33" />
+    <application android:label="Free My TV tests">
+      <provider android:name="io.freemytv.TestMediaProvider" android:authorities="io.freemytv.tests.media" android:exported="true" />
+    </application>
+    <instrumentation android:name="io.freemytv.ShelfTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+<instrumentation android:name="io.freemytv.EditorTests" android:targetPackage="io.freemytv.tests" android:targetProcesses="io.freemytv.tests" />
+<instrumentation android:name="io.freemytv.SearchDataTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+<instrumentation android:name="io.freemytv.SearchUiTests" android:targetPackage="io.freemytv.tests" android:targetProcesses="io.freemytv.tests" />
+<instrumentation android:name="io.freemytv.PlayerTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.StreamDataTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+<instrumentation android:name="io.freemytv.DiscoveryUiTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.ProgressDataTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+<instrumentation android:name="io.freemytv.ContinueUiTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.PerformanceTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.PerformanceBenchmark" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.SourceFailureTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+<instrumentation android:name="io.freemytv.PlayerFailureTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.SearchAccessTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.PreferenceRepair" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+<instrumentation android:name="io.freemytv.LivePlaybackCheck" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.EpisodeDataTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+<instrumentation android:name="io.freemytv.EpisodeFlowTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.SeekSpeedTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.IntroDataTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+<instrumentation android:name="io.freemytv.IntroPlayerTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.IntroTimingTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.ThumbnailPrototypeTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.PreparedPreviewTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.PreparedPreviewDataTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+<instrumentation android:name="io.freemytv.JavaPreviewPrototypeTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+<instrumentation android:name="io.freemytv.ArtworkLifecycleTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+</manifest>

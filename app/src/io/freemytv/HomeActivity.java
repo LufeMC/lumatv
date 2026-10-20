@@ -15,7 +15,9 @@ import android.widget.TextView;
  * back to the TV's original one.
  */
 public class HomeActivity extends Activity {
+    static java.lang.ref.WeakReference<HomeActivity> visible = new java.lang.ref.WeakReference<>(null);
     private HomeView home;
+    long fontsMs, viewMs;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -33,18 +35,21 @@ public class HomeActivity extends Activity {
             setContentView(t);
             return;
         }
-        Ui.init(this);
-        home = new HomeView(this);
+        long phase = android.os.SystemClock.elapsedRealtime();
+        Ui.init(this); fontsMs = android.os.SystemClock.elapsedRealtime() - phase;
+        phase = android.os.SystemClock.elapsedRealtime();
+        home = new HomeView(this); viewMs = android.os.SystemClock.elapsedRealtime() - phase;
         setContentView(home);
         getWindow().setBackgroundDrawable(null);
     }
 
     @Override protected void onResume() {
-        super.onResume();
+        super.onResume(); visible = new java.lang.ref.WeakReference<>(this);
         if (home != null) home.resume();
     }
 
     @Override protected void onPause() {
+        if (visible.get() == this) visible.clear();
         if (home != null) home.pause();
         super.onPause();
     }

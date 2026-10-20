@@ -5,6 +5,7 @@ config.properties
 
 # Build output
 out/
+.player-libs/
 *.apk
 
 # macOS

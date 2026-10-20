@@ -5,6 +5,8 @@
     android:versionName="1.0">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
+    <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- After the TV boots (and after a TV update), checks that Free My TV mode is still as you left it. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -13,6 +15,11 @@
          returns null). The shelf and streaming apps, the live TV apps and, through the <intent>, every TV app
          (for "All Apps"). -->
     <queries>
+        <package android:name="com.stremio.one" />
+        <package android:name="com.suntv.sunnxt" />
+        <package android:name="com.tubitv" />
+        <package android:name="com.plexapp.android" />
+        <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>
         <package android:name="com.netflix.ninja" />
         <package android:name="com.google.android.youtube.tv" />
         <package android:name="com.amazon.amazonvideo.livingroom" />
@@ -66,6 +73,26 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity android:name=".PlayerActivity" android:process=":home" android:exported="false"
+            android:screenOrientation="landscape" android:theme="@style/FreeMyTV.Home" />
+        <activity android:name=".SourcesActivity" android:process=":home" android:exported="false"
+            android:screenOrientation="landscape" android:theme="@style/FreeMyTV.Home" />
+        <activity android:name=".ConnectSourcesActivity" android:process=":home" android:exported="false"
+            android:screenOrientation="landscape" android:theme="@style/FreeMyTV.Home" />
+        <activity
+            android:name=".SearchActivity"
+            android:process=":home"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/FreeMyTV.Home" />
+
+        <activity
+            android:name=".AppsActivity"
+            android:process=":home"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/FreeMyTV.Home" />
 
         <!-- The home screen. Its own process (:home): if it ever crashes, the safety net in the main process still
              works. It only becomes the TV's home screen in Free My TV mode (cmd package set-home-activity). -->

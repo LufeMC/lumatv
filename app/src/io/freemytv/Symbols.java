@@ -29,6 +29,7 @@ final class Symbols {
     private static final Map<String, Bitmap> CACHE = new HashMap<>();
     private static final Map<Integer, PorterDuffColorFilter> FILTERS = new HashMap<>();
     private static final Paint PAINT = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private static final Paint SEARCH_PAINT = new Paint(Paint.ANTI_ALIAS_FLAG);
     private static final RectF RECT = new RectF();
 
     static Bitmap get(Context c, String name) {
@@ -52,6 +53,20 @@ final class Symbols {
 
     /** Draws centered at (cx, cy) in the given color (lighter, translucent parts of the symbol stay lighter). */
     static void draw(Context c, Canvas canvas, String name, float cx, float cy, float pointSize, int color) {
+        if ("search".equals(name)) {
+            synchronized (SEARCH_PAINT) {
+                SEARCH_PAINT.setColorFilter(null);
+                SEARCH_PAINT.setColor(color);
+                SEARCH_PAINT.setStyle(Paint.Style.STROKE);
+                SEARCH_PAINT.setStrokeWidth(pointSize * 0.09f);
+                SEARCH_PAINT.setStrokeCap(Paint.Cap.ROUND);
+                canvas.drawCircle(cx - pointSize * 0.1f, cy - pointSize * 0.1f, pointSize * 0.30f, SEARCH_PAINT);
+                canvas.drawLine(cx + pointSize * 0.12f, cy + pointSize * 0.12f,
+                        cx + pointSize * 0.39f, cy + pointSize * 0.39f, SEARCH_PAINT);
+                SEARCH_PAINT.setStyle(Paint.Style.FILL);
+            }
+            return;
+        }
         Bitmap b = get(c, name);
         if (b == null) return;
         synchronized (PAINT) {   // card loading (another thread) also draws symbols

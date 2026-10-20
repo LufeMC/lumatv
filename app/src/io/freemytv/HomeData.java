@@ -88,6 +88,7 @@ final class HomeData {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final List<Listener> listeners = new ArrayList<>();
     private volatile boolean fetchingPrices, fetchingWeather;
+    private long pricesAttempt, weatherAttempt;
 
     private HomeData(Context c) {
         cache = c.getSharedPreferences("homedata", Context.MODE_PRIVATE);
@@ -108,8 +109,9 @@ final class HomeData {
     void refreshIfStale() {
         long now = System.currentTimeMillis();
         // A negative age (the TV's clock went back) counts as stale: otherwise the data would freeze.
-        if (!fetchingPrices && (now - pricesAt > PRICES_EVERY || now < pricesAt)) {
-            fetchingPrices = true;
+        if (!fetchingPrices && (now - pricesAt > PRICES_EVERY || now < pricesAt)
+                && (pricesAttempt == 0 || now < pricesAttempt || now - pricesAttempt >= PRICES_EVERY)) {
+            pricesAttempt = now; fetchingPrices = true;
             io.execute(() -> {
                 try {
                     String body = get(pricesUrl());
@@ -124,8 +126,9 @@ final class HomeData {
                 }
             });
         }
-        if (!fetchingWeather && (now - weatherAt > WEATHER_EVERY || now < weatherAt)) {
-            fetchingWeather = true;
+        if (!fetchingWeather && (now - weatherAt > WEATHER_EVERY || now < weatherAt)
+                && (weatherAttempt == 0 || now < weatherAttempt || now - weatherAttempt >= 180000)) {
+            weatherAttempt = now; fetchingWeather = true;
             io.execute(() -> {
                 try {
                     String body = get(WEATHER_URL);
