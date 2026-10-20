@@ -1,95 +1,254 @@
 package io.freemytv;
 
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.PorterDuff;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.widget.Button;
+import android.os.SystemClock;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.ImageView;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** Import add-ons through Stremio's official device authorization page. */
+import java.io.File;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * Connect Stremio (the Connect board): a QR for Stremio's official device link, three steps, and the wait. The
+ * password never passes through LumaTV: the phone signs in on link.stremio.com and allows this TV, and the TV then
+ * reads the account's add-ons and keeps them encrypted (AddonStore). A new code comes by itself when one expires.
+ * Extra "automatic": opened by playback with nothing connected; it closes itself once connected.
+ */
 public class ConnectSourcesActivity extends TvActivity {
+    private static final long CODE_LIFE = 5 * 60_000L;
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
-    private TextView status, link;
-    private Button connect;
+    private Kit.Theme t;
+    private FrameLayout qrCard;
+    private ImageView qr;
+    private TextView heading, line, status;
+    private Kit.Glyph spinner;
+    private LinearLayout steps, buttons;
     private int generation;
     private long expires;
-    private boolean active;
-    private boolean automatic, begun, complete;
-    private ImageView qr;
+    private boolean active, automatic, begun, complete, confirming;
+
+    private final Runnable tick = new Runnable() {
+        @Override public void run() {
+            if (expires == 0) return;
+            long left = expires - SystemClock.elapsedRealtime();
+            if (left <= 0) {
+                if (active) begin(); else expires = 0;   // a fresh code by itself
+                return;
+            }
+            long s = left / 1000;
+            status.setText(Ui.tr("Esperando o telefone · novo código em ", "Waiting for your phone · new code in ")
+                    + String.format(Locale.ROOT, "%d:%02d", s / 60, s % 60));
+            main.postDelayed(this, 1000);
+        }
+    };
 
     @Override protected void onCreate(Bundle state) {
-        super.onCreate(state); Ui.init(this); Watchdog.install(this);
+        super.onCreate(state);
+        Ui.init(this);
+        Watchdog.install(this);
         automatic = getIntent().getBooleanExtra("automatic", false);
-        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(48), dp(28), dp(48), dp(24)); root.setBackgroundColor(0xFF151518);
-        TextView heading = TvWidgets.text(this, Ui.tr("Conta Stremio", "Stremio account"), 26);
-        heading.setTypeface(Ui.displaySemibold); heading.setAccessibilityHeading(true); root.addView(heading);
-        root.addView(TvWidgets.text(this, Ui.tr("Uma autorização de conta é necessária. Depois, seus complementos serão carregados automaticamente.",
-                "One account approval is required. Your add-ons will then load automatically."), 18));
-        root.addView(TvWidgets.text(this, Ui.tr("Entre no site oficial pelo telefone. Sua senha não passa pela LumaTV.",
-                "Sign in on the official website with your phone. LumaTV does not receive your password."), 16));
-        root.addView(TvWidgets.text(this, Ui.tr("A TV protege sua conexão com criptografia e atualiza seus complementos automaticamente.",
-                "The TV encrypts your account connection and updates your add-ons automatically."), 16));
-        LinearLayout code = new LinearLayout(this); code.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        code.setPadding(0, dp(12), 0, dp(12));
-        qr = new ImageView(this); qr.setContentDescription(Ui.tr("Código QR para autorizar o Stremio", "QR code for Stremio approval"));
-        qr.setVisibility(android.view.View.GONE); code.addView(qr, new LinearLayout.LayoutParams(dp(128), dp(128)));
-        link = TvWidgets.text(this, "", 24); link.setTextIsSelectable(false); link.setPadding(dp(20), 0, 0, 0);
-        code.addView(link, new LinearLayout.LayoutParams(0, -2, 1)); root.addView(code);
-        status = TvWidgets.text(this, AddonStore.connected(this) ? Ui.tr("Fontes conectadas.", "Sources connected.")
-                : Ui.tr("Preparando autorização…", "Preparing account approval…"), 17);
-        status.setAccessibilityLiveRegion(android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE); root.addView(status);
-        connect = TvWidgets.button(this, Ui.tr("Conectar Stremio", "Connect Stremio"), v -> begin());
-        root.addView(connect, params());
-        if (automatic) connect.setVisibility(android.view.View.GONE);
-        if (!automatic && AddonStore.connected(this)) root.addView(TvWidgets.button(this, Ui.tr("Desconectar conta", "Disconnect account"), v ->
-                new AlertDialog.Builder(this).setTitle(Ui.tr("Desconectar fontes?", "Disconnect sources?"))
-                        .setMessage(Ui.tr("Isso remove os complementos apenas da LumaTV.",
-                                "This removes the add-ons from LumaTV only."))
-                        .setNegativeButton(Ui.tr("Cancelar", "Cancel"), null)
-                        .setPositiveButton(Ui.tr("Desconectar", "Disconnect"), (dialog, which) -> {
-                            generation++; AddonStore.clear(this); setResult(RESULT_OK);
-                            link.setText(""); status.setText(Ui.tr("Fontes desconectadas.", "Sources disconnected."));
-                            connect.setEnabled(true);
-                        }).show()), params());
-        root.addView(TvWidgets.button(this, Ui.tr("Voltar", "Back"), v -> finish()), params());
-        setContentView(root); if (!automatic) connect.requestFocus();
+        t = Kit.Theme.night();
+        setContentView(layout());
+        if (AddonStore.connected(this) && !automatic) showConnected(); else showWaiting();
     }
+
+    private int px(float d) { return Kit.px(this, d); }
+
+    private View layout() {
+        FrameLayout root = new FrameLayout(this);
+        GradientDrawable sky = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0xFF141B2E, Look.GROUND_NIGHT});
+        root.setBackground(sky);
+
+        qrCard = new FrameLayout(this);
+        qrCard.setBackground(Kit.round(this, 0xFFFFFFFF, 36));
+        qrCard.setElevation(px(24));
+        int pad = px(44);
+        qrCard.setPadding(pad, pad, pad, pad);
+        qr = new ImageView(this);
+        qr.setContentDescription(Ui.tr("Código QR para link.stremio.com", "QR code for link.stremio.com"));
+        qrCard.addView(qr, new FrameLayout.LayoutParams(px(452), px(452)));
+        FrameLayout.LayoutParams qp = new FrameLayout.LayoutParams(px(540), px(540));
+        qp.leftMargin = px(216);
+        qp.topMargin = px(270);
+        root.addView(qrCard, qp);
+
+        LinearLayout words = Kit.row(this, LinearLayout.VERTICAL);
+        FrameLayout.LayoutParams wp = new FrameLayout.LayoutParams(px(880), ViewGroup.LayoutParams.WRAP_CONTENT);
+        wp.leftMargin = px(896);
+        wp.topMargin = px(260);
+        root.addView(words, wp);
+        words.addView(brand(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, px(40)));
+        heading = Kit.text(this, "", 68, Ui.displaySemibold, t.ink);
+        heading.setLetterSpacing(-0.03f);
+        words.addView(heading, Kit.top(this, Kit.fill(), 36));
+        line = Kit.text(this, "", 30, Ui.regular, 0xC2F5F3EF);
+        line.setLineSpacing(0, 1.35f);
+        words.addView(line, Kit.top(this, Kit.fill(), 20));
+        steps = Kit.row(this, LinearLayout.VERTICAL);
+        words.addView(steps, Kit.top(this, Kit.fill(), 44));
+        String[] list = {Ui.tr("Escaneie o código com o telefone", "Scan the code with your phone"),
+                Ui.tr("Entre no Stremio e toque em Permitir", "Sign in to Stremio and tap Allow"),
+                Ui.tr("A reprodução começa sozinha", "Playback starts on its own")};
+        for (int i = 0; i < list.length; i++) {
+            LinearLayout li = Kit.row(this, LinearLayout.HORIZONTAL);
+            li.setGravity(Gravity.TOP);
+            li.addView(Kit.text(this, String.valueOf(i + 1), 28, Ui.semibold, 0x80F5F3EF), new LinearLayout.LayoutParams(px(60), ViewGroup.LayoutParams.WRAP_CONTENT));
+            li.addView(Kit.text(this, list[i], 28, Ui.regular, t.ink), Kit.weight());
+            steps.addView(li, Kit.top(this, Kit.fill(), i == 0 ? 0 : 18));
+        }
+        LinearLayout st = Kit.row(this, LinearLayout.HORIZONTAL);
+        spinner = new Kit.Glyph(this, Kit.Glyph.SPINNER, android.content.res.ColorStateList.valueOf(t.ink));
+        st.addView(spinner, new LinearLayout.LayoutParams(px(28), px(28)));
+        status = Kit.text(this, "", 24, Ui.regular, t.ink2);
+        status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        LinearLayout.LayoutParams sp = Kit.weight();
+        sp.leftMargin = px(16);
+        st.addView(status, sp);
+        words.addView(st, Kit.top(this, Kit.fill(), 48));
+        buttons = Kit.row(this, LinearLayout.HORIZONTAL);
+        words.addView(buttons, Kit.top(this, Kit.fill(), 40));
+        return root;
+    }
+
+    /** Stremio's white logo (lifted by the home screen from the app's TV art), or its name. */
+    private View brand() {
+        File[] files = new File(getCacheDir(), "logos").listFiles();
+        for (int i = 0; files != null && i < files.length; i++) {
+            if (!files[i].getName().startsWith("stremio-") || !files[i].getName().endsWith(".png")) continue;
+            Bitmap b = BitmapFactory.decodeFile(files[i].getPath());
+            if (b == null) break;
+            ImageView v = new ImageView(this);
+            v.setImageBitmap(b);
+            v.setAdjustViewBounds(true);
+            v.setColorFilter(0xE6F5F3EF, PorterDuff.Mode.SRC_IN);
+            v.setContentDescription("Stremio");
+            return v;
+        }
+        TextView name = Kit.text(this, "Stremio", 32, Ui.semibold, 0xE6F5F3EF);
+        name.setGravity(Gravity.CENTER_VERTICAL);
+        return name;
+    }
+
+    private TextView button(String label, View.OnClickListener click) {
+        TextView b = Kit.button(this, t, label, click);
+        b.setMinHeight(px(68));
+        Look.textSize(b, 24);
+        b.setTypeface(Ui.medium);
+        b.setPadding(px(34), 0, px(34), 0);
+        LinearLayout.LayoutParams lp = Kit.wrap();
+        if (buttons.getChildCount() > 0) lp.leftMargin = px(16);
+        buttons.addView(b, lp);
+        return b;
+    }
+
+    // MARK: - States
+
+    private void showWaiting() {
+        heading.setText(Ui.tr("Conecte seus complementos", "Connect your add-ons"));
+        line.setText(Ui.tr("A LumaTV toca aqui o que os seus complementos do Stremio encontram. Um scan, e ela lembra.",
+                "LumaTV plays what your Stremio add-ons find, right here. One scan, and it remembers."));
+        steps.setVisibility(View.VISIBLE);
+        qrCard.setVisibility(View.INVISIBLE);
+        spinner.setVisibility(View.VISIBLE);
+        status.setText(Ui.tr("Pegando um código…", "Getting a code…"));
+        buttons.removeAllViews();
+        button(Ui.tr("Agora não", "Not now"), v -> finish()).requestFocus();
+    }
+
+    private void showConnected() {
+        expires = 0;
+        heading.setText(Ui.tr("Complementos conectados", "Your add-ons are connected"));
+        line.setText(Ui.tr("A LumaTV toca aqui o que os seus complementos do Stremio encontram.",
+                "LumaTV plays what your Stremio add-ons find, right here."));
+        steps.setVisibility(View.GONE);
+        qrCard.setVisibility(View.INVISIBLE);
+        spinner.setVisibility(View.GONE);
+        status.setText(Ui.tr("Conectada", "Connected"));
+        network.execute(() -> {
+            try {
+                int n = AddonStore.load(this).length();
+                main.post(() -> { if (!complete && expires == 0) status.setText(Ui.tr("Conectada · " + n + " complementos", "Connected · " + n + " add-ons")); });
+            } catch (Exception ignored) {}
+        });
+        confirming = false;
+        connectedButtons();
+    }
+
+    private void connectedButtons() {
+        buttons.removeAllViews();
+        TextView done = button(Ui.tr("Pronto", "Done"), v -> finish());
+        button(Ui.tr("Conectar de novo", "Connect again"), v -> { showWaiting(); begin(); });
+        button(confirming ? Ui.tr("Aperte de novo para desconectar", "Press again to disconnect") : Ui.tr("Desconectar", "Disconnect"), v -> {
+            if (!confirming) {
+                confirming = true;
+                connectedButtons();
+                buttons.getChildAt(2).requestFocus();
+                return;
+            }
+            generation++;
+            AddonStore.clear(this);
+            setResult(RESULT_OK);
+            showWaiting();
+            status.setText(Ui.tr("Complementos desconectados.", "Add-ons disconnected."));
+            spinner.setVisibility(View.GONE);
+            buttons.removeAllViews();
+            button(Ui.tr("Conectar o Stremio", "Connect Stremio"), x -> { showWaiting(); begin(); }).requestFocus();
+            button(Ui.tr("Agora não", "Not now"), x -> finish());
+        });
+        if (!confirming) done.requestFocus();
+    }
+
+    // MARK: - Stremio's device link
+
     private void begin() {
-        begun = true; int request = ++generation; connect.setEnabled(false); link.setText(""); qr.setVisibility(android.view.View.GONE);
-        status.setText(Ui.tr("Obtendo código…", "Getting a code…"));
+        begun = true;
+        int request = ++generation;
+        expires = 0;
+        main.removeCallbacks(tick);
+        qrCard.setVisibility(View.INVISIBLE);
+        spinner.setVisibility(View.VISIBLE);
+        status.setText(Ui.tr("Pegando um código…", "Getting a code…"));
+        int size = px(452);
         network.execute(() -> {
             try {
                 JSONObject result = MediaHttp.result(MediaHttp.json("https://link.stremio.com/api/v2/create?type=Create", null, 8000));
                 String code = result.getString("code"), address = result.getString("link");
                 if (!code.matches("[A-Za-z0-9]{4,12}") || !address.equals("https://link.stremio.com/" + code)) throw new Exception();
-                String image = result.optString("qrcode", "");
-                android.graphics.Bitmap bitmap = qrImage(image, address);
+                Bitmap image = Qr.bitmap(address, size);
                 main.post(() -> {
                     if (!current(request)) return;
-                    expires = android.os.SystemClock.elapsedRealtime() + 5 * 60 * 1000;
-                    link.setText(address);
-                    if (bitmap != null) { qr.setImageBitmap(bitmap); qr.setVisibility(android.view.View.VISIBLE); }
-                    status.setText(Ui.tr("Abra este endereço no telefone. Autorize a conexão com o Stremio.",
-                            "Open this address on your phone. Authorize the Stremio connection."));
+                    expires = SystemClock.elapsedRealtime() + CODE_LIFE;
+                    if (image != null) qr.setImageBitmap(image);
+                    qrCard.setVisibility(View.VISIBLE);
+                    main.removeCallbacks(tick);
+                    tick.run();
                     poll(code, request);
                 });
-            } catch (Exception ignored) { main.post(() -> failure(request)); }
+            } catch (Exception ignored) {
+                main.post(() -> failure(request));
+            }
         });
     }
+
     private void poll(String code, int request) {
-        if (!current(request)) return;
-        if (android.os.SystemClock.elapsedRealtime() >= expires) { failure(request); return; }
+        if (!current(request) || expires == 0) return;
         network.execute(() -> {
             try {
                 JSONObject response = MediaHttp.json("https://link.stremio.com/api/v2/read?type=Read&code=" + code, null, 8000);
@@ -100,53 +259,55 @@ public class ConnectSourcesActivity extends TvActivity {
                 String[] sealed = AddonStore.sealAccount(addons, auth);
                 main.post(() -> {
                     if (!current(request)) return;
-                        try {
-                            AddonStore.commit(this, sealed);
-                            link.setText(""); connect.setEnabled(true); setResult(RESULT_OK); complete = true;
-                                status.setText(String.format(Ui.tr("%d complementos importados. Selecione Voltar para escolher um título.",
-                                        "%d add-ons imported. Select Back to choose a title."), addons.length()));
-                            if (automatic && active) finish();
-                        } catch (Exception ignored) { main.post(() -> failure(request)); }
+                    try {
+                        AddonStore.commit(this, sealed);
+                        setResult(RESULT_OK);
+                        complete = true;
+                        expires = 0;
+                        main.removeCallbacks(tick);
+                        if (automatic && active) { finish(); return; }
+                        showConnected();
+                        status.setText(String.format(Ui.tr("%d complementos importados.", "%d add-ons imported."), addons.length()));
+                    } catch (Exception e) {
+                        failure(request);
+                    }
                 });
-            } catch (Exception ignored) { main.postDelayed(() -> poll(code, request), 3000); }
+            } catch (Exception ignored) {
+                main.postDelayed(() -> poll(code, request), 3000);
+            }
         });
     }
+
     private void failure(int request) {
         if (!current(request)) return;
-        generation++; connect.setEnabled(true); link.setText("");
-        qr.setVisibility(android.view.View.GONE); connect.setVisibility(android.view.View.VISIBLE);
-        connect.setText(Ui.tr("Tentar novamente", "Try again"));
-        status.setText(Ui.tr("A conexão expirou ou falhou. Selecione Conectar Stremio para tentar novamente.",
-                "The connection expired or failed. Select Try again."));
-        connect.requestFocus();
+        generation++;
+        expires = 0;
+        main.removeCallbacks(tick);
+        qrCard.setVisibility(View.INVISIBLE);
+        spinner.setVisibility(View.GONE);
+        status.setText(Ui.tr("Não deu para falar com o Stremio. Confira a internet da TV.", "Couldn’t reach Stremio. Check the TV’s internet."));
+        buttons.removeAllViews();
+        button(Ui.tr("Tentar de novo", "Try again"), v -> begin()).requestFocus();
+        button(Ui.tr("Agora não", "Not now"), v -> finish());
     }
+
     private boolean current(int request) { return request == generation && !isFinishing() && !isDestroyed(); }
+
     @Override protected void onResume() {
-        super.onResume(); active = true;
+        super.onResume();
+        active = true;
         if (complete && automatic) finish();
-        else if (automatic && !begun) begin();
+        else if (!begun && (automatic || !AddonStore.connected(this))) begin();
+        else if (expires != 0 && SystemClock.elapsedRealtime() >= expires) begin();
+        else if (expires != 0) { main.removeCallbacks(tick); tick.run(); }
     }
-    @Override protected void onPause() { active = false; super.onPause(); }
-    @Override protected void onDestroy() { generation++; main.removeCallbacksAndMessages(null); network.shutdownNow(); super.onDestroy(); }
-    private int dp(float value) { return TvWidgets.dp(this, value); }
-    private static android.graphics.Bitmap qrImage(String image, String address) {
-        java.net.HttpURLConnection connection = null;
-        try {
-            android.net.Uri uri = android.net.Uri.parse(image);
-            if (!"https".equals(uri.getScheme()) || !"link.stremio.com".equals(uri.getHost())
-                    || !"/qr".equals(uri.getPath()) || !address.equals(uri.getQueryParameter("data"))) return null;
-            connection = (java.net.HttpURLConnection) new java.net.URL(image).openConnection();
-            connection.setConnectTimeout(5000); connection.setReadTimeout(5000); connection.setInstanceFollowRedirects(false);
-            if (connection.getResponseCode() != 200 || connection.getContentLengthLong() > 256 * 1024) return null;
-            try (java.io.InputStream input = connection.getInputStream(); java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
-                byte[] data = new byte[4096]; int count;
-                while ((count = input.read(data)) != -1) { if (output.size() + count > 256 * 1024) return null; output.write(data, 0, count); }
-                byte[] encoded = output.toByteArray(); return android.graphics.BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
-            }
-        } catch (Exception ignored) { return null; }
-        finally { if (connection != null) connection.disconnect(); }
-    }
-    private LinearLayout.LayoutParams params() {
-        LinearLayout.LayoutParams value = new LinearLayout.LayoutParams(dp(300), dp(48)); value.topMargin = dp(12); return value;
+
+    @Override protected void onPause() { active = false; main.removeCallbacks(tick); super.onPause(); }
+
+    @Override protected void onDestroy() {
+        generation++;
+        main.removeCallbacksAndMessages(null);
+        network.shutdownNow();
+        super.onDestroy();
     }
 }
