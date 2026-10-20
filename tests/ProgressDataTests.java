@@ -9,7 +9,7 @@ import java.util.Collections;
 import java.util.List;
 
 /** Verify resume identity, cloud filtering, and uncommitted seeking. */
-public class ProgressDataTests extends Instrumentation {
+public class ProgressDataTests extends TvTest {
     private int checks;
     private void check(boolean value, String label) { if (!value) throw new AssertionError(label); checks++; }
     @Override public void onCreate(Bundle args) { super.onCreate(args); if (android.app.Application.getProcessName().equals("io.freemytv")) start(); }
@@ -21,6 +21,11 @@ public class ProgressDataTests extends Instrumentation {
         Bundle output = new Bundle();
         try {
             Ui.init(getTargetContext());
+            check(ContinueWatching.watchNextKind(android.media.tv.TvContract.PreviewPrograms.TYPE_TV_SERIES).equals("tv"), "Watch Next series keep their content type");
+            check(ContinueWatching.watchNextKind(android.media.tv.TvContract.PreviewPrograms.TYPE_TV_SEASON).equals("tv"), "Watch Next seasons keep their content type");
+            ContinueWatching.Entry movieName = new ContinueWatching.Entry(), seriesName = new ContinueWatching.Entry();
+            movieName.title="The Flash"; seriesName.title="The Flash"; seriesName.kind="tv";
+            check(!ContinueWatching.sameShow(movieName,seriesName), "a movie cannot hide a series with the same name");
             JSONArray cloud = new JSONArray().put(item("tt123", "tt123:2:4", 120000));
             cloud.put(item("tt124", "tt124:1:2", 0));
             cloud.put(item("tt125", "tt125:1:2", 10000).put("removed", true));

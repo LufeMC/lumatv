@@ -6,6 +6,10 @@ import android.view.KeyEvent;
 
 /** The remote Search key opens title search from application screens. */
 public abstract class TvActivity extends Activity {
+    @Override public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+        return getApplicationContext().getSharedPreferences(name, mode);
+    }
+    @Override public java.io.File getFilesDir() { return getApplicationContext().getFilesDir(); }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         if (event.getKeyCode() == KeyEvent.KEYCODE_SEARCH) {
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {

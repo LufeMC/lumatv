@@ -1,5 +1,7 @@
 package io.freemytv;
 
+import android.content.Intent;
+
 import android.content.SharedPreferences;
 import android.media.AudioManager;
 import android.net.ConnectivityManager;
@@ -135,6 +137,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
     private long replayUntil = -1;
     private final SubtitleSync sync = new SubtitleSync();
     private boolean syncSolving, syncDone, syncDrift;
+    private int timingRevision, syncTask;
     private long undoOffset; private double undoScale = 1;
     private final Runnable cueTick = new Runnable() { @Override public void run() { renderCues(); } };
     private final Runnable hideSynced = () -> { if (synced != null) synced.setVisibility(View.GONE); };
@@ -453,7 +456,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         main.removeCallbacks(advanceEpisode); surface.setAlpha(1); loadingCover.setVisibility(View.VISIBLE); subtitles.setVisibility(View.VISIBLE);
         frozenVideo.setVisibility(View.GONE); frozenVideo.setImageDrawable(null); exhausted = false; autoSubtitleDone = false;
         bufferingSince = SystemClock.elapsedRealtime(); sourceOpenedAt = bufferingSince;
-        release = source.release(); sync.reset(); syncSolving = false;
+        release = source.release(); sync.reset(); syncSolving = false; syncTask++;
         if (externalCues != null) { externalCues.offset = Prefs.subtitleOffset(this, release); syncDrift = false; }
         session.outcome.put(source.url, "trying");
         PlaybackLog.add(this, "Trying source " + (session.index + 1) + "/" + session.sources.size() + " · " + source.shortQuality() + " · " + source.addon);
@@ -1002,7 +1005,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
     }
     /** Shows an add-on subtitle with our own scheduler; the player isn't touched beyond hiding embedded text. */
     private void useExternal(AddonSubtitles.Subtitle subtitle, boolean chosen) {
-        external = subtitle; externalCues = null; cueCache = null; shownLines = ""; syncDone = false; syncDrift = false; sync.stop(); sync.reset();
+        external = subtitle; externalCues = null; cueCache = null; shownLines = ""; syncDone = false; syncSolving = false; syncTask++; syncDrift = false; sync.stop(); sync.reset();
         subtitles.setCues(Collections.emptyList());
         applyTextParameters();
         if (chosen) PlaybackMemory.rememberSubtitles(this, session.videoId, "addon:" + subtitle.language);
@@ -1050,9 +1053,13 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
     }
     /** S3: subtitles timed for another frame rate drift; fix the speed once the duration is known. */
     private void applyDrift(long duration) {
-        if (externalCues == null) return;
+        if (externalCues == null || !preferences.getBoolean(Prefs.AUTO_SYNC, true) || Prefs.subtitleOffset(this, release) != 0) return;
         double scale = SubtitleCues.driftScale(externalCues.lastEnd(), duration);
-        if (scale != 1 && externalCues.scale == 1) { externalCues.scale = scale; renderCues(); PlaybackLog.add(this, "Subtitle speed adjusted for frame rate"); }
+        if (scale != 1 && externalCues.scale == 1) {
+            undoOffset = externalCues.offset; undoScale = externalCues.scale;
+            externalCues.scale = scale; renderCues(); PlaybackLog.add(this, "Subtitle speed adjusted for frame rate");
+            showSyncNotice(Ui.tr("Velocidade das legendas ajustada", "Subtitle speed adjusted"));
+        }
     }
     /** S4: listen to the first minutes and line the cues up with the dialogue, unless the viewer set the timing. */
     private void startSync() {
@@ -1066,11 +1073,15 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         if (sync.heard() < SubtitleSync.NEEDED_FRAMES) return;
         syncSolving = true; sync.stop();
         final SubtitleCues cues = externalCues; final byte[] speech = sync.speech();
+        final int timingRequest = timingRevision, sourceRequest = generation, task = ++syncTask;
         network.execute(() -> {
             SubtitleSync.Result result = SubtitleSync.solve(cues, speech);
             main.post(() -> {
+                if (task != syncTask) return;
                 syncSolving = false; syncDone = true;
-                if (isDestroyed() || externalCues != cues || player == null || !result.confident) {
+                if (isDestroyed() || externalCues != cues || player == null || !result.confident
+                        || timingRequest != timingRevision || sourceRequest != generation
+                        || !preferences.getBoolean(Prefs.AUTO_SYNC, true) || Prefs.subtitleOffset(this, release) != 0) {
                     if (!result.confident) PlaybackLog.add(this, "Subtitle sync not confident; timing unchanged");
                     return;
                 }
@@ -1086,14 +1097,19 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         });
     }
     private void showSynced(long change) {
-        synced.change.setText(String.format(Ui.tr("Movidas %s s %s", "Moved %s s %s"), String.format(java.util.Locale.ROOT, "%.1f", Math.abs(change) / 1000.0),
+        showSyncNotice(String.format(Ui.tr("Movidas %s s %s", "Moved %s s %s"), String.format(java.util.Locale.ROOT, "%.1f", Math.abs(change) / 1000.0),
                 change < 0 ? Ui.tr("antes", "earlier") : Ui.tr("depois", "later")));
+    }
+    private void showSyncNotice(String message) {
+        synced.change.setText(message);
         synced.setVisibility(View.VISIBLE);
         synced.remaining.setScaleX(1); synced.remaining.animate().scaleX(0).setDuration(6000).setInterpolator(new android.view.animation.LinearInterpolator()).start();
         main.removeCallbacks(hideSynced); main.postDelayed(hideSynced, 6000);
     }
     private void undoSync() {
         if (externalCues == null) return;
+        timingRevision++;
+        syncDone = true; sync.stop();
         externalCues.offset = undoOffset; externalCues.scale = undoScale;
         Prefs.setSubtitleOffset(this, release, undoOffset);
         synced.setVisibility(View.GONE); renderCues();
@@ -1117,6 +1133,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
     }
     private void adjustTiming(int direction, int repeat) {
         if (externalCues == null) return;
+        timingRevision++; sync.stop(); syncDone = true;
         long step = repeat >= 10 ? 500 : 100;
         externalCues.offset = Math.max(-60000, Math.min(60000, externalCues.offset + direction * step));
         timing.set(externalCues.offset); renderCues();
@@ -1378,6 +1395,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         if (session.index + 1 >= session.sources.size() && !session.discovering) return;   // showExhausted follows
         hideControls(); introActions.setVisibility(View.GONE);
         if (upNextShown) closeUpNext();
+        recover.more.setVisibility(View.GONE); recover.retry.setVisibility(View.GONE); recover.stremio.setVisibility(View.GONE);
         recover.title.setText(Ui.tr("Trocando de fonte", "Switching to another source"));
         String reason = reasonLine();
         String resume = session.position > 5000 ? String.format(Ui.tr("Você continua em %s.", "You’ll pick up at %s."), SeekPreview.clock(session.position)) : "";
@@ -1397,7 +1415,16 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         recover.line.setText(String.format(Ui.tr("%d tentadas. Escolha uma ou tente de novo mais tarde.", "Tried %d. Choose one, or try again later."), Math.max(1, session.sources.size())));
         recover.line.setVisibility(View.VISIBLE);
         recover.spinner.setVisibility(View.GONE); ((View) recover.dashes.getParent()).setVisibility(View.GONE);
-        recover.setVisibility(View.VISIBLE); recover.choose.requestFocus();
+        recover.more.setVisibility(session.hasMore() ? View.VISIBLE : View.GONE);
+        recover.more.setOnClickListener(v -> { if (session.queueMore()) { attempts = 0; failure = "user"; next(); } });
+        recover.retry.setVisibility(View.VISIBLE);
+        recover.retry.setOnClickListener(v -> { setResult(RESULT_OK, new Intent().putExtra("retry_sources", true)); finish(); });
+        recover.stremio.setVisibility(session.entry != null && StremioLinks.installed(this) ? View.VISIBLE : View.GONE);
+        recover.stremio.setOnClickListener(v -> {
+            try { ContinueWatching.Entry e = session.entry; startActivity(new Intent(Intent.ACTION_VIEW, StremioLinks.videoUri(e.kind, e.imdb, session.videoId)).setPackage(StremioLinks.PACKAGE)); }
+            catch (Exception error) { recover.line.setText(Ui.tr("Não foi possível abrir o Stremio.", "Cannot open Stremio.")); }
+        });
+        recover.setVisibility(View.VISIBLE); (session.hasMore() ? recover.more : recover.retry).requestFocus();
         PlaybackLog.add(this, "No source played (" + session.sources.size() + " tried)");
         updateKeepAwake();
     }

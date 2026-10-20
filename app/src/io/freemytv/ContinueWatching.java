@@ -275,6 +275,7 @@ final class ContinueWatching {
     /** Same show: the same imdb id when both have one; otherwise (a service's card) the same title. */
     static boolean sameShow(Entry a, Entry b) {
         if (!a.imdb.isEmpty() && !b.imdb.isEmpty()) return a.imdb.equals(b.imdb);
+        if (!a.kind.equals(b.kind)) return false;
         String x = showKey(a);
         return !x.isEmpty() && x.equals(showKey(b));
     }
@@ -359,12 +360,17 @@ final class ContinueWatching {
                 if (provider(pkg).isEmpty() || type > 1 || cursor.getInt(10) == 0) continue;
                 Entry e = new Entry(); e.pkg = pkg; e.provider = provider(pkg); e.id = "tv:" + cursor.getLong(0); e.title = cursor.getString(2);
                 e.subtitle = cursor.isNull(3) ? "" : cursor.getString(3); e.art = cursor.isNull(4) ? "" : cursor.getString(4); e.intent = cursor.getString(5);
-                e.kind = cursor.getInt(11) == android.media.tv.TvContract.PreviewPrograms.TYPE_TV_EPISODE ? "tv" : "movie";
+                e.kind = watchNextKind(cursor.getInt(11));
                 e.position = Math.max(0, cursor.getLong(6)); e.duration = Math.max(0, cursor.getLong(7)); e.updated = cursor.getLong(8);
                 if (e.title != null && e.intent != null && externalIntent(context, e) != null) result.add(e);
             }
         } catch (Exception ignored) {}
         return result;
+    }
+    static String watchNextKind(int type) {
+        return type == android.media.tv.TvContract.PreviewPrograms.TYPE_TV_EPISODE
+                || type == android.media.tv.TvContract.PreviewPrograms.TYPE_TV_SEASON
+                || type == android.media.tv.TvContract.PreviewPrograms.TYPE_TV_SERIES ? "tv" : "movie";
     }
     static Intent externalIntent(Context context, Entry entry) {
         if (provider(entry.pkg).isEmpty() || entry.intent == null || entry.intent.isEmpty()) return null;

@@ -46,7 +46,7 @@ VERSION_CODE=$((COMMITS + 100))
 VERSION_NAME="1.1.$COMMITS"
 # --release: a build to publish. It leaves out the TMDB key and home location; each TV enters its own.
 RELEASE=false; for a in "$@"; do [ "$a" = "--release" ] && RELEASE=true; done
-if $RELEASE; then TMDB=""; LAT=40.7128; LON=-74.0060; CITYV=""; else TMDB="$(prop tmdb_key '')"; CITYV="$(prop city '')"; fi
+if $RELEASE; then TMDB=""; LAT=""; LON=""; CITYV=""; else TMDB="$(prop tmdb_key '')"; CITYV="$(prop city '')"; fi
 
 rm -rf out && mkdir -p out/gen/io/freemytv out/classes
 cat > out/gen/io/freemytv/Config.java <<EOF
@@ -103,7 +103,8 @@ if [ ! -f "$KS" ]; then
     -storepass "$KS_PASS" -keypass "$KS_PASS" -dname "CN=LumaTV" >/dev/null 2>&1
   rm -f signing.sha256
 fi
-"$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" --out FreeMyTV.apk out/aligned.apk
+export LUMATV_SIGNING_PASS="$KS_PASS"
+"$BT/apksigner" sign --ks "$KS" --ks-pass env:LUMATV_SIGNING_PASS --key-pass env:LUMATV_SIGNING_PASS --out FreeMyTV.apk out/aligned.apk
 CERT="$("$BT/apksigner" verify --print-certs FreeMyTV.apk | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)"
 if [ -f signing.sha256 ]; then
   [ "$CERT" = "$(tr -d '[:space:]' < signing.sha256)" ] || { echo "Signed with a different key than signing.sha256 expects ($CERT). Stopping."; rm -f FreeMyTV.apk; exit 1; }

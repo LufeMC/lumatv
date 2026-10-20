@@ -129,6 +129,13 @@ final class HomeData {
                 }
             });
         }
+        refreshWeatherIfStale();
+    }
+
+    /** The screensaver needs weather only. It does not fetch market prices. */
+    void refreshWeatherIfStale() {
+        if (!Setup.hasLocation()) return;
+        long now = System.currentTimeMillis();
         if (!fetchingWeather && (now - weatherAt > WEATHER_EVERY || now < weatherAt)
                 && (weatherAttempt == 0 || now < weatherAttempt || now - weatherAttempt >= 180000)) {
             weatherAttempt = now; fetchingWeather = true;

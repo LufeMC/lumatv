@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /** Run the installed player with generated, silent test media. */
-public class PlayerTests extends Instrumentation {
+public class PlayerTests extends TvTest {
     private int checks;
     private PlayerActivity activity;
     private SourcesActivity anchor;

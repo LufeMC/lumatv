@@ -242,7 +242,7 @@ final class PlayerScreens {
         final PlayerIcon spinner;
         final TextView title, line, count;
         final LinearLayout dashes;
-        final PlayerViews.Pill choose, back;
+        final PlayerViews.Pill choose, back, more, retry, stremio;
         Recover(Context c, View.OnClickListener onChoose, View.OnClickListener onBack) {
             super(c); setBackgroundColor(DARK);
             header = new Header(c);
@@ -273,6 +273,10 @@ final class PlayerScreens {
             back.setOnClickListener(onBack);
             LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-2, px(c, 72)); bp.leftMargin = px(c, 16);
             buttons.addView(back, bp);
+            more = new PlayerViews.Pill(c, null, false, Ui.tr("Tentar mais fontes", "Try more sources"), 72, Look.LABEL, Look.RAISED);
+            retry = new PlayerViews.Pill(c, null, false, Ui.tr("Tentar novamente", "Try again"), 72, Look.LABEL, Look.RAISED);
+            stremio = new PlayerViews.Pill(c, null, false, Ui.tr("Abrir no Stremio", "Open in Stremio"), 72, Look.LABEL, Look.RAISED);
+            for (View extra : new View[]{more, retry, stremio}) { LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-2, px(c,72)); ep.leftMargin = px(c,16); buttons.addView(extra, ep); extra.setVisibility(GONE); }
             LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-2, -2); wp.topMargin = px(c, 64);
             column.addView(buttons, wp);
             addView(column, at(c, -1, -2, Gravity.TOP, 0, 330, 0, 0));
@@ -281,7 +285,9 @@ final class PlayerScreens {
         /** Source n of total: tried ones dim, the current one ink, later ones faint. */
         void sources(int current, int total, String quality) {
             Context c = getContext();
-            total = Math.max(1, Math.min(12, total));
+            int fullTotal = Math.max(1, total), fullCurrent = current;
+            int base = current / 12 * 12; current -= base;
+            total = Math.max(1, Math.min(12, fullTotal - base));
             dashes.removeAllViews();
             for (int i = 0; i < total; i++) {
                 View d = new View(c);
@@ -289,7 +295,7 @@ final class PlayerScreens {
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px(c, 28), px(c, 6)); if (i > 0) lp.leftMargin = px(c, 8);
                 dashes.addView(d, lp);
             }
-            count.setText(String.format(Ui.tr("Fonte %d de %d", "Source %d of %d"), current + 1, total) + (quality == null || quality.isEmpty() ? "" : " · " + quality));
+            count.setText(String.format(Ui.tr("Fonte %d de %d", "Source %d of %d"), fullCurrent + 1, fullTotal) + (quality == null || quality.isEmpty() ? "" : " · " + quality));
         }
     }
 

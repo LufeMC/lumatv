@@ -17,7 +17,7 @@ import java.util.Collections;
  * Skip recap, Up next when the credits begin (and the card turns into Up next), the same source after a network drop,
  * and subtitle timing saved per release.
  */
-public class PlayerFlowTests extends Instrumentation {
+public class PlayerFlowTests extends TvTest {
     private PlayerActivity activity;
     private SourcesActivity anchor;
     private int checks;
@@ -112,6 +112,26 @@ public class PlayerFlowTests extends Instrumentation {
             key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_RIGHT); key(KeyEvent.KEYCODE_DPAD_CENTER);
             final String saved = release;
             await(() -> Prefs.subtitleOffset(getTargetContext(), saved) == 200 && ((View) value("timing")).getVisibility() != View.VISIBLE, "timing saved per release");
+
+            // Automatic timing respects the setting and a manual adjustment.
+            final SubtitleCues[] original = {null};
+            main(() -> {
+                original[0] = (SubtitleCues) value("externalCues");
+                set("externalCues", SubtitleCues.parse("1\n00:20:40,000 --> 00:20:50,000\nTest\n"));
+                getTargetContext().getSharedPreferences(Prefs.PLAYBACK, 0).edit().putBoolean(Prefs.AUTO_SYNC, false).commit();
+                call("applyDrift", new Class<?>[]{long.class}, 1200000L);
+            });
+            await(() -> ((SubtitleCues) value("externalCues")).scale == 1, "automatic timing stays off when disabled");
+            main(() -> {
+                getTargetContext().getSharedPreferences(Prefs.PLAYBACK, 0).edit().putBoolean(Prefs.AUTO_SYNC, true).commit();
+                call("applyDrift", new Class<?>[]{long.class}, 1200000L);
+            });
+            await(() -> ((SubtitleCues) value("externalCues")).scale == 1, "a manual timing adjustment takes priority");
+            main(() -> { Prefs.setSubtitleOffset(getTargetContext(), saved, 0); call("applyDrift", new Class<?>[]{long.class}, 1200000L); });
+            await(() -> ((SubtitleCues) value("externalCues")).scale != 1 && ((View) value("synced")).getVisibility() == View.VISIBLE, "automatic speed correction offers Undo");
+            main(() -> call("undoSync", new Class<?>[0]));
+            await(() -> ((SubtitleCues) value("externalCues")).scale == 1 && ((View) value("synced")).getVisibility() != View.VISIBLE, "Undo restores subtitle speed");
+            main(() -> set("externalCues", original[0]));
 
             // Credits: Up next with a countdown; the card turns into Up next.
             main(() -> {

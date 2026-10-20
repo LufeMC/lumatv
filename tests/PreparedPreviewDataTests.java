@@ -8,7 +8,7 @@ import java.io.File;
 import java.util.*;
 
 /** Check random-read integrity and actual preview colors at different video positions. */
-public class PreparedPreviewDataTests extends Instrumentation {
+public class PreparedPreviewDataTests extends TvTest {
     private int checks;
     private void check(boolean value, String label) { if (!value) throw new AssertionError(label); checks++; }
     @Override public void onCreate(Bundle args) { super.onCreate(args); if (android.app.Application.getProcessName().equals("io.freemytv")) start(); }

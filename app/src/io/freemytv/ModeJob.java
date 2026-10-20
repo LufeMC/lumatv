@@ -58,6 +58,7 @@ public class ModeJob extends JobService {
 
     /** Schedules a job (one pending per action: a new request replaces the old one). */
     static void schedule(Context c, String action, String mode, long delayMs) {
+        if (TestState.active) return;
         JobScheduler scheduler = c.getSystemService(JobScheduler.class);
         if (scheduler == null) return;
         PersistableBundle extras = new PersistableBundle();
@@ -72,6 +73,7 @@ public class ModeJob extends JobService {
 
     /** An automatic update waits for the TV to be idle (screen off or screensaver for a while); Updater checks the hour. */
     static void scheduleIdleUpdate(Context c, long delayMs) {
+        if (TestState.active) return;
         JobScheduler scheduler = c.getSystemService(JobScheduler.class);
         if (scheduler == null) return;
         PersistableBundle extras = new PersistableBundle();
@@ -85,6 +87,7 @@ public class ModeJob extends JobService {
 
     /** The quiet check every 12 hours (kept across reboots). Scheduling it again keeps the existing one. */
     static void scheduleDaily(Context c) {
+        if (TestState.active) return;
         JobScheduler scheduler = c.getSystemService(JobScheduler.class);
         if (scheduler == null || scheduler.getPendingJob(DAILY_ID) != null) return;
         PersistableBundle extras = new PersistableBundle();

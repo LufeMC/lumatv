@@ -127,7 +127,7 @@ final class LibrarySync {
                     all.put(imdb, item);
                     write(app, all);
                 }
-                String account = AddonStore.account(app);
+                String account = TestState.active ? "" : AddonStore.account(app);
                 if (!account.isEmpty()) put(account, item);
             } catch (Exception failure) { PlaybackLog.add(app, "Library sync failed: " + failure.getClass().getSimpleName()); }
         });

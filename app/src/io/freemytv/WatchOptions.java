@@ -118,7 +118,7 @@ final class WatchOptions {
         Map<String, Option> options = parseCatalog(countries == null ? null : countries.optJSONObject(region));
         for (Service service : SERVICES) {
             Option option = options.get(service.key);
-            if (option != null && HomeApps.launchIntent(c.getPackageManager(), service.pkg) != null) result.options.add(option);
+            if (option != null && Prefs.serviceOn(c, service.pkg) && HomeApps.launchIntent(c.getPackageManager(), service.pkg) != null) result.options.add(option);
         }
         result.options.sort(java.util.Comparator.comparingInt(WatchOptions::rank));
         return result;

@@ -12,7 +12,7 @@ import java.util.List;
 import androidx.media3.exoplayer.ExoPlayer;
 
 /** Exercise remote navigation and episode changes with generated video and real title metadata. */
-public class EpisodeFlowTests extends Instrumentation {
+public class EpisodeFlowTests extends TvTest {
     private SourcesActivity title;
     private PlayerActivity player;
     private int checks;

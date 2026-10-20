@@ -106,8 +106,10 @@ final class HomeApps {
             "com.tcl.guard",                        // TCL: Safety Guard
             "com.tcl.exhibit"));                    // TCL: T-Exhibition
 
-    private static final Map<String, Bitmap> TILES = new HashMap<>();   // key → ready card
-    private static final Map<String, Bitmap> LOGOS = new HashMap<>();   // key → colored logo with no background
+    private static final Map<String, Bitmap> TILES = Collections.synchronizedMap(new HashMap<>());
+    private static final Map<String, Bitmap> LOGOS = Collections.synchronizedMap(new HashMap<>());
+
+    static void trimArtwork() { TILES.clear(); LOGOS.clear(); }
 
     /**
      * Home screen apps. `extract`: also lifts the logos that are not on disk yet (slow: background only); without it,
@@ -199,7 +201,7 @@ final class HomeApps {
     static List<Item> shortcuts(Context c) {
         List<Item> items = new ArrayList<>();
         if (liveTv(c) != null) {
-            items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao Vivo", "Live TV"), "tv"));
+            items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao vivo", "Live TV"), "tv"));
         }
         items.addAll(inputs(c));
         items.add(shortcut(ALL_APPS, "all", Ui.tr("Todos os Apps", "All Apps"), "apps"));
@@ -247,7 +249,7 @@ final class HomeApps {
     /** For the bottom drawer: live TV and every HDMI input (the ones with no device are shown dimmed). */
     static List<Item> allInputs(Context c) {
         List<Item> items = new ArrayList<>();
-        if (liveTv(c) != null) items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao Vivo", "Live TV"), "tv"));
+        if (liveTv(c) != null) items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao vivo", "Live TV"), "tv"));
         items.addAll(inputs(c, true));
         return items;
     }

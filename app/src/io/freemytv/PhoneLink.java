@@ -158,7 +158,8 @@ final class PhoneLink {
             address = ip;
             typingToken = token();
             setupToken = token();
-            workers = Executors.newFixedThreadPool(3);
+            workers = new java.util.concurrent.ThreadPoolExecutor(3, 3, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.ArrayBlockingQueue<Runnable>(8));
             final ServerSocket accepting = s;
             final ExecutorService pool = workers;
             Thread t = new Thread(() -> accept(accepting, pool), "lumatv-phone-link");
@@ -425,7 +426,7 @@ final class PhoneLink {
                 out.put("error", "no_key");
             } else {
                 try {
-                    List<TitleSearch.Title> found = TitleSearch.search(typed);
+                    List<TitleSearch.Title> found = TitleSearch.searchBoth(typed);
                     for (int i = 0; i < found.size() && i < 8; i++) {
                         TitleSearch.Title t = found.get(i);
                         String id = t.kind + ":" + t.id;

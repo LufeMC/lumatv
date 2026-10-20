@@ -15,7 +15,7 @@ import org.json.JSONObject;
  * removed cards, one card per show, Stremio library items, the playback log and interrupted sessions.
  * Writes only to "test-lumatv-" copies of the settings and a temporary folder.
  */
-public class PlaybackDataTests extends Instrumentation {
+public class PlaybackDataTests extends TvTest {
     private int checks;
     private void check(boolean value, String label) { if (!value) throw new AssertionError(label); checks++; }
     @Override public void onCreate(Bundle args) { super.onCreate(args); if (android.app.Application.getProcessName().equals("io.freemytv")) start(); }
@@ -84,8 +84,8 @@ public class PlaybackDataTests extends Instrumentation {
             check(PlaybackPlan.backBufferMs(0) == 15000, "unknown bitrate keeps 15 s");
             check(PlaybackPlan.backBufferMs(5_000_000) == 8388, "5 Mbps keeps about 8 s");
             check(PlaybackPlan.backBufferMs(40_000_000) == 1048, "a 40 Mbps remux keeps about 1 s");
-            check(PlaybackPlan.backBufferMs(80_000_000) == 1000, "never below 1 s");
-            for (long rate = 1_000_000; rate <= 40_000_000; rate += 1_000_000)
+            check(PlaybackPlan.backBufferMs(80_000_000) == 524, "80 Mbps stays within the rewind memory limit");
+            for (long rate = 1_000_000; rate <= 200_000_000; rate += 1_000_000)
                 check(PlaybackPlan.backBufferMs(rate) * rate / 8000 <= PlaybackPlan.TARGET_BUFFER_BYTES / 4, "quarter of the limit at " + rate);
             AddonStreams.Source sized = source("sized", 2160, "A"); sized.videoSize = 15_000_000_000L;
             check(PlaybackPlan.estimateBitrate(sized, 2 * 3600_000L) == 16_666_666L, "bitrate from size and runtime");

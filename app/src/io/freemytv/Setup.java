@@ -41,6 +41,30 @@ final class Setup {
 
     static boolean hasKey() { return !tmdbKey().isEmpty(); }
 
+    static boolean hasLocation() {
+        try {
+            double lat = Double.parseDouble(latitude()), lon = Double.parseDouble(longitude());
+            return Double.isFinite(lat) && Double.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+        } catch (NumberFormatException missing) { return false; }
+    }
+
+    /** Move an existing private build configuration into encrypted TV storage before a public-build update. */
+    static void migrateConfig(Context context) {
+        if (TestState.active || Config.TMDB_KEY.isEmpty() || onTv()) return;
+        final Context target = context.getApplicationContext();
+        Thread migration = new Thread(() -> {
+            synchronized (Setup.class) {
+                if (TestState.active || onTv()) return;
+                try {
+                    JSONObject fields = new JSONObject().put("tmdb_key", tmdbKey()).put("region", region()).put("city", city())
+                            .put("latitude", latitude()).put("longitude", longitude()).put("temperature", temperature());
+                    if (!save(target, fields)) AppLog.w("Private build configuration migration failed");
+                } catch (Exception error) { AppLog.w("Private build configuration migration failed"); }
+            }
+        }, "lumatv-setup-migration");
+        migration.setPriority(Thread.MIN_PRIORITY); migration.start();
+    }
+
     /** True when the TV itself holds the key (not only the build). */
     static boolean onTv() {
         return !load().optString("tmdb_key", "").isEmpty();

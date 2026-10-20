@@ -12,7 +12,7 @@ import java.lang.reflect.Field;
 import org.json.*;
 
 /** Inspect Android seek timestamps while verified episode playback continues. */
-public class JavaPreviewPrototypeTests extends Instrumentation {
+public class JavaPreviewPrototypeTests extends TvTest {
     private SourcesActivity title;
     private PlayerActivity activity;
     private Object value(String name) throws Exception { Field f = PlayerActivity.class.getDeclaredField(name); f.setAccessible(true); return f.get(activity); }

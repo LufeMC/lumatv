@@ -80,6 +80,7 @@ final class Recs {
         SERVICE_NAME.put("globoplay", "Globoplay");
         SERVICE_NAME.put("max", "Max");
         SERVICE_NAME.put("appletv", "Apple TV");
+        SERVICE_NAME.put("stremio", "Stremio");
     }
     /** Country for "what streams where" (config.properties "tmdb_region", e.g. US, GB, BR). */
 
@@ -171,7 +172,7 @@ final class Recs {
         List<Pick> list = new ArrayList<>();
         if (!hasKey(context)) return list;    // no TMDB key: no recommendations
         for (Pick p : picks) {
-            if ((kind == null || kind.equals(p.kind)) && (!p.detailed || p.pkg != null)) list.add(p);   // app missing: skip
+            if ((kind == null || kind.equals(p.kind)) && (!p.detailed || p.pkg != null && Prefs.serviceOn(context, p.pkg))) list.add(p);   // app missing: skip
         }
         if (list.isEmpty()) return list;
         long hour = System.currentTimeMillis() / 3600_000L;
@@ -181,6 +182,14 @@ final class Recs {
         for (int i = 0; i < list.size() && out.size() < 3; i++) {
             Pick p = list.get((int) ((hour * 3 + i) % list.size()));
             if (seen.add(franchise(p.title))) out.add(p);
+        }
+        boolean included = false;
+        for (Pick p : out) if ("stremio".equals(p.app)) included = true;
+        if (!included) for (int i = 0; i < list.size(); i++) {
+            Pick p = list.get((int) ((hour + i) % list.size()));
+            if ("stremio".equals(p.app) && !seen.contains(franchise(p.title))) {
+                if (out.size() >= 3) out.set(2, p); else out.add(p); break;
+            }
         }
         return out;
     }
@@ -196,7 +205,7 @@ final class Recs {
         for (Pick p : out) seen.add(franchise(p.title));
         for (Pick p : picks) {
             if (out.size() >= max) break;
-            if (p.detailed && p.pkg != null && p.backdrop != null && seen.add(franchise(p.title))) out.add(p);
+            if (p.detailed && p.pkg != null && Prefs.serviceOn(context, p.pkg) && p.backdrop != null && seen.add(franchise(p.title))) out.add(p);
         }
         return out;
     }
@@ -466,7 +475,7 @@ final class Recs {
     /** Genre, runtime (or seasons) and the service it's on, among the ones the TV has. */
     private void fetchDetails(Pick p) throws Exception {
         JSONObject o = get("/" + p.kind + "/" + p.id
-                + "?language=" + lang() + "&append_to_response=watch/providers,images&include_image_language=null,pt,en");
+                + "?language=" + lang() + "&append_to_response=watch/providers,images" + (p.kind.equals("movie") ? ",release_dates" : "") + "&include_image_language=null,pt,en");
         String best = bestBackdrop(o.optJSONObject("images"));
         if (best != null) p.backdrop = best;
         List<String> parts = new ArrayList<>();
@@ -495,9 +504,28 @@ final class Recs {
                 p.pkg = s[2];
             }
         }
+        if (p.app == null && AddonStore.connected(context) && homeReleased(o, p.kind, SeriesEpisodes.today())) {
+            p.app = "stremio"; p.pkg = StremioLinks.PACKAGE;
+        }
         if (p.app != null) parts.add(SERVICE_NAME.get(p.app));
         p.meta = String.join(" · ", parts);
         p.detailed = true;
+    }
+
+    static boolean homeReleased(JSONObject details, String kind, String today) {
+        if ("tv".equals(kind)) {
+            String date = details.optString("first_air_date", ""); return date.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}") && date.compareTo(today) <= 0;
+        }
+        JSONObject dates = details.optJSONObject("release_dates"); JSONArray countries = dates == null ? null : dates.optJSONArray("results");
+        for (int i = 0; countries != null && i < countries.length(); i++) {
+            JSONObject country = countries.optJSONObject(i); JSONArray releases = country == null ? null : country.optJSONArray("release_dates");
+            for (int j = 0; releases != null && j < releases.length(); j++) {
+                JSONObject release = releases.optJSONObject(j); if (release == null) continue;
+                int type = release.optInt("type"); String date = release.optString("release_date", "");
+                if (type >= 4 && type <= 6 && date.length() >= 10 && date.substring(0,10).compareTo(today) <= 0) return true;
+            }
+        }
+        return false;
     }
 
     /** TV genres that TMDB returns in English even in pt-BR. */
@@ -552,7 +580,7 @@ final class Recs {
     }
 
     private boolean installed(String pkg) {
-        return HomeApps.launchIntent(context.getPackageManager(), pkg) != null;
+        return Prefs.serviceOn(context, pkg) && HomeApps.launchIntent(context.getPackageManager(), pkg) != null;
     }
 
     private JSONObject get(String path) throws IOException, org.json.JSONException {

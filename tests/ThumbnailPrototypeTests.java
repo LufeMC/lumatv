@@ -12,7 +12,7 @@ import java.lang.reflect.Field;
 import org.json.*;
 
 /** Measure software thumbnail extraction while the main decoder plays an actual episode. */
-public class ThumbnailPrototypeTests extends Instrumentation {
+public class ThumbnailPrototypeTests extends TvTest {
     private SourcesActivity title;
     private PlayerActivity activity;
     private Object value(String name) throws Exception { Field f = PlayerActivity.class.getDeclaredField(name); f.setAccessible(true); return f.get(activity); }

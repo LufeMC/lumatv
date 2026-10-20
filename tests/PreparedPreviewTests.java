@@ -11,7 +11,7 @@ import java.util.*;
 import org.json.*;
 
 /** Measure first-use prepared frames on a real stream and preserve the user's watch data. */
-public class PreparedPreviewTests extends Instrumentation {
+public class PreparedPreviewTests extends TvTest {
     private SourcesActivity title;
     private PlayerActivity activity;
     private Object value(String name) throws Exception { Field f = PlayerActivity.class.getDeclaredField(name); f.setAccessible(true); return f.get(activity); }
@@ -72,7 +72,7 @@ public class PreparedPreviewTests extends Instrumentation {
                 if (!player().isPlaying() || !(Boolean) value("sourceValidated")) throw new AssertionError("Preparation interrupted playback");
                 position[0] = player().getCurrentPosition(); if (player().getVideoDecoderCounters() != null) droppedAfter[0] = player().getVideoDecoderCounters().droppedBufferCount;
                 java.lang.reflect.Method controls = PlayerActivity.class.getDeclaredMethod("showControls"); controls.setAccessible(true); controls.invoke(activity);
-                ((android.view.View) value("pause")).requestFocus();
+                ((android.view.View) value("seek")).requestFocus();
             } catch (Exception error) { throw new RuntimeException(error); } });
             report.put("observed_ms", SystemClock.elapsedRealtime() - start).put("advanced_ms", position[0] - original[0])
                     .put("cpu_ms", android.os.Process.getElapsedCpuTime() - cpu).put("min_available_memory_bytes", minMemory[0])

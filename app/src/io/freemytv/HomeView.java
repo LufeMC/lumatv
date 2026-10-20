@@ -65,6 +65,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final RectF PILL_REST = new RectF(480, 404, 1440, 500), PILL_CONTENT = new RectF(760, 56, 1160, 116),
             PILL_SEARCH = new RectF(480, 52, 1440, 140);
     // States and focus
+    private Bitmap setupCode, phoneCode;
+    private String interruptedShown = "";
+    private final PhoneLink.Listener phoneListener = new PhoneLink.Listener() {
+        public void onText(String text) { if (running) voiceResult(text); }
+        public void onOpen(String id) { TitleSearch.Title t = PhoneLink.result(id); if (running && t != null) openTitle(t.id, t.kind, t.name, ""); }
+    };
     private static final int REST = 0, CONTENT = 1, SEARCH = 2;
     static final int Z_ICONS = 0, Z_PILL = 1, Z_CHIP = 2, Z_LOGOS = 3, Z_HERO = 4, Z_ROW = 5, Z_KEYS = 6, Z_RESULTS = 7,
             Z_RECENT = 9, Z_SETUP = 10;
@@ -251,6 +257,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Paint cardTitleP, cardSubP, resultTitleP, whereP, recentP, logoNameP, hintP, kbdP, allTitleP, allItemP, allItemOnP;
     private Paint editP, menuItemP, menuItemOnP, bigTitleP, bigSubP, setupTitleP, setupBodyP, setupButtonP, offlineP, offlineLineP;
     private Paint toastP, labelP;
+    private Paint glanceHeadP, glanceBodyP, glanceTempP, glanceValueP;
+    private boolean inputsReady, pendingInputs;
     private TextPaint heroTitleP;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint image = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
@@ -343,6 +351,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     void resume() {
         if (running) return;
         running = true;
+        PhoneLink.setTypingListener(phoneListener);
+        TvSync.start(getContext());
+        refreshPhoneCodes();
+        ContinueWatching.Entry interrupted = PlaybackSession.interrupted(getContext());
+        if (interrupted != null && !interrupted.video.equals(interruptedShown)) {
+            interruptedShown = interrupted.video;
+            handler.postDelayed(() -> {
+                if (!running || opening != null) return;
+                PlayerSheet.show(activity, Ui.tr("Continuar de onde parou?", "Resume playback?"),
+                        java.util.Arrays.asList(Ui.tr("Continuar ", "Resume ") + interrupted.title, Ui.tr("Agora não", "Not now")), 0,
+                        java.util.Arrays.asList(() -> { PlaybackSession.clearInterrupted(getContext()); resume(interrupted); },
+                                () -> PlaybackSession.clearInterrupted(getContext())), () -> {});
+            }, 4500);
+        }
         lastNanos = 0;
         data.addListener(this);
         recs.addListener(this);
@@ -368,6 +390,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     void pause() {
         if (!running) return;
         running = false;
+        PhoneLink.setTypingListener(null);
         okDown = false;
         handler.removeCallbacks(longPress);
         handler.removeCallbacks(tick);
@@ -392,6 +415,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     void destroy() {
         pause();
         click.release();
+    }
+
+    /** Release hidden artwork before the player allocates video buffers. */
+    void releaseHiddenArtwork() {
+        land = landFrom = null;
+        heroFrom = heroTo = null;
+        heroKey = "";
+        whiteLogos.clear();
+        for (HomeApps.Item item : shelf) { item.tile = item.logo = item.logoDark = null; }
+        for (HomeApps.Item item : allApps) { item.tile = item.logo = item.logoDark = null; }
+        for (HomeApps.Item item : others) { item.tile = item.logo = item.logoDark = null; }
+        for (HomeApps.Item item : inputs) { item.tile = item.logo = item.logoDark = null; }
+        art.trim();
+        recs.trimArtwork();
+        HomeApps.trimArtwork();
+        TitleArtwork.trimMemory();
     }
 
     /** Home pressed on the home screen: back to rest, search focused. */
@@ -437,14 +476,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         final Context c = getContext().getApplicationContext();
         WORK.execute(() -> {
             final List<HomeApps.Item> s = HomeApps.shelf(c, true);
+            handler.post(() -> { if (running && !editing) { setShelf(s); changed(); } });
             final List<HomeApps.Item> in = HomeApps.allInputs(c);
             final List<HomeApps.Item> o = HomeApps.others(c);
             handler.post(() -> {
+                if (!running) { HomeApps.trimArtwork(); return; }
                 if (!editing) setShelf(s);
                 inputs = in;
+                inputsReady = true;
                 others = o;
                 if (overlayKind != OV_ALL) allApps = allAppsList();
                 changed();
+                if (pendingInputs) { pendingInputs = false; openInputs(); }
             });
         });
     }
@@ -480,6 +523,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (ContinueWatching.Entry e : entries) {
             if (row.size() >= 12) break;
             row.add(cwCard(e, cw));
+        }
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (ContinueWatching.Entry e : entries) seen.add(ContinueWatching.showKey(e));
+        for (ContinueWatching.Entry e : ContinueWatching.watchlist(getContext())) {
+            if (row.size() >= 18) break;
+            if (seen.add(ContinueWatching.showKey(e))) row.add(cwCard(e, Ui.tr("Minha lista", "Watchlist")));
         }
         String trending = Ui.tr("Em alta nos seus apps", "Trending on your apps");
         if (online) for (Recs.Pick p : recs.trending(ROW_MAX - row.size())) row.add(pickCard(p, trending));
@@ -523,7 +572,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.sub = join(code, c.left);
         c.progress = e.duration > 0 ? Math.min(1, (float) e.position / e.duration) : -1;
         c.kicker = Ui.tr("Continuar", "Continue") + " · " + e.provider;
-        c.primary = e.external() ? Ui.tr("Continuar em ", "Resume on ") + e.provider : Ui.tr("Continuar", "Resume");
+        c.primary = e.external() ? Ui.tr("Continuar em ", "Resume on ") + e.provider : e.position > 0 ? Ui.tr("Continuar", "Resume") : Ui.tr("Reproduzir", "Play");
         c.secondary = "tv".equals(e.kind) ? Ui.tr("Episódios", "Episodes") : Ui.tr("Detalhes", "Details");
         c.source = () -> {
             if (!e.external() && "Stremio".equals(e.provider)) try { ContinueWatching.resolve(e); } catch (Exception ignored) {}
@@ -670,6 +719,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void makePaints() {
+        glanceHeadP = text(Ui.medium, 22, Look.INK_3);
+        glanceBodyP = text(Ui.regular, 28, Look.INK_2);
+        glanceTempP = text(Ui.light, 104, Look.INK);
+        glanceValueP = text(Ui.medium, 30, Look.INK);
         clockP = text(Ui.medium, 40, Look.INK);
         clockP.setLetterSpacing(-0.01f);
         weatherP = text(Ui.regular, 26, Look.INK);
@@ -831,7 +884,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             final Landscape next = Landscape.load(c, want);
             handler.post(() -> {
                 landLoading = false;
-                if (next == null) return;
+                if (next == null || !running) return;
                 if (animate && land != null && running) {
                     landFrom = land;
                     landFadeAt = SystemClock.uptimeMillis();
@@ -978,6 +1031,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int ink = topInk();
         drawClock(c, ink);
         drawIcons(c, ink);
+        if (overlayKind == OV_MENU && menuCard == null) return;
         boolean setup = !Setup.hasKey();
         if (!online && mode != SEARCH) {
             drawOffline(c, restA);
@@ -1234,8 +1288,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /** The phone setup page's QR code (PhoneLink), or null when the phone link isn't available. */
-    private Bitmap setupQr() {
-        return null;
+    private Bitmap setupQr() { return setupCode; }
+
+    private void refreshPhoneCodes() {
+        WORK.execute(() -> {
+            String setup = Setup.hasKey() ? null : PhoneLink.setupUrl(getContext());
+            String search = mode == SEARCH ? PhoneLink.typingUrl(getContext()) : null;
+            Bitmap a = setup == null ? null : Qr.bitmap(setup, Look.si(getContext(), 144));
+            Bitmap b = search == null ? null : Qr.bitmap(search, Look.si(getContext(), 100));
+            handler.post(() -> { if (running) { setupCode = a; phoneCode = b; changed(); } });
+        });
     }
 
     /** Offline: the bar says so and the apps keep working (HomeOffline). */
@@ -1402,7 +1464,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawLogos(Canvas c, float alpha) {
         if (overlayKind == OV_ALL) alpha *= 1 - Ui.clamp(overlayT.value);
         if (alpha <= 0.004f) return;
-        boolean dayLook = day() && contentT.value < 0.5f;
+        boolean dayLook = day() && contentT.value < 0.5f && !(overlayKind == OV_MENU && menuCard == null);
         int ink = dayLook ? Look.DAY_INK : Look.INK;
         PorterDuffColorFilter tint = dayLook ? DAY_TINT : INK_TINT;
         for (int i = 0; i < shelf.size() && i < logoX.length; i++) {
@@ -1466,6 +1528,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void drawSearch(Canvas c, float alpha) {
         keys.setActive(overlayKind == OV_NONE && zone == Z_KEYS);
+        if (phoneCode != null) {
+            r.set(1480 * k, 40 * k, 1580 * k, 140 * k);
+            image.setAlpha(Math.round(255 * alpha)); c.drawBitmap(phoneCode, null, r, image); image.setAlpha(255);
+        }
         float top = RESULTS_TOP * k;
         if (query.trim().isEmpty()) {
             if (recent.isEmpty()) return;
@@ -1612,6 +1678,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawMenu(Canvas c, float alpha) {
+        if (menuCard == null) { drawGlance(c, alpha); return; }
         float menuLeft, menuTop, menuW = 600 * k;
         if (menuCard != null) {
             // A card's actions: the card large on the left, the menu beside it (LongPress).
@@ -1684,6 +1751,52 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             p.setColor(Ui.alpha(ink, alpha));
             c.drawText(item.label, x, r2.centerY() + Ui.halfCap(p), p);
             y += itemH + 4 * k;
+        }
+    }
+
+    /** The approved glance panel keeps inputs beside weather and cached market data. */
+    private void drawGlance(Canvas c, float alpha) {
+        fill.setColor(Ui.alpha(0xFF000000, 0.35f * alpha)); c.drawRect(screen, fill);
+        c.save(); c.translate(0, -600 * k); drawLogos(c, 0.5f * alpha); c.restore();
+        r.set(24 * k, 460 * k, 1896 * k, 1056 * k);
+        clip.reset(); clip.addRoundRect(r, 40 * k, 40 * k, Path.Direction.CW);
+        c.save(); c.clipPath(clip);
+        if (land != null) { image.setAlpha(Math.round(255 * alpha)); c.drawBitmap(land.blurred, null, screen, image); image.setAlpha(255); }
+        fill.setColor(Ui.alpha(0xFF100D0C, 0.82f * alpha)); c.drawRect(r, fill); c.restore();
+        stroke.setStrokeWidth(Math.max(1, k)); stroke.setColor(Ui.alpha(Look.GLASS_LINE, alpha)); c.drawRoundRect(r, 40 * k, 40 * k, stroke);
+        glanceHeadP.setColor(Ui.alpha(Look.INK_3, alpha)); glanceBodyP.setColor(Ui.alpha(Look.INK_2, alpha));
+        glanceTempP.setColor(Ui.alpha(Look.INK, alpha)); glanceValueP.setColor(Ui.alpha(Look.INK, alpha));
+        c.drawText(Ui.tr("Entradas", "Inputs"), 116 * k, 552 * k, glanceHeadP);
+        if (menu.isEmpty()) c.drawText(Ui.tr("Nenhuma entrada disponível", "No inputs available"), 116 * k, 622 * k, glanceBodyP);
+        int first = Math.max(0, menuIndex - 5);
+        for (int i = first; i < menu.size() && i < first + 6; i++) {
+            MenuItem item = menu.get(i); float top = (572 + (i - first) * 72) * k;
+            boolean selected = i == menuIndex;
+            if (selected) { fill.setColor(Ui.alpha(Look.INK, alpha)); r2.set(96 * k, top, 548 * k, top + 68 * k); c.drawRoundRect(r2, 18 * k, 18 * k, fill); }
+            menuItemP.setColor(Ui.alpha(selected ? Look.ON_INK : item.dim ? Look.INK_3 : Look.INK, alpha));
+            String label = TextUtils.ellipsize(item.label, new TextPaint(menuItemP), 410 * k, TextUtils.TruncateAt.END).toString();
+            c.drawText(label, 116 * k, top + 34 * k + Ui.halfCap(menuItemP), menuItemP);
+        }
+        HomeData.Weather wx = data.weather;
+        String city = Setup.city().isEmpty() ? Ui.tr("Tempo", "Weather") : Setup.city();
+        c.drawText(city, 620 * k, 552 * k, glanceHeadP);
+        String temperature = Double.isNaN(wx.temp) ? "—" : HomeData.degrees(wx.temp);
+        c.drawText(temperature, 620 * k, 674 * k, glanceTempP);
+        c.drawText(HomeData.condition(wx.code, wx.isDay), 640 * k + glanceTempP.measureText(temperature), 674 * k, glanceBodyP);
+        int hours = Math.min(5, Math.min(wx.hours.size(), wx.hourTemp.size()));
+        for (int i = 0; i < hours; i++) {
+            float x = (620 + i * 128) * k;
+            c.drawText(HomeData.hour(wx.hours.get(i)), x, 746 * k, glanceHeadP);
+            c.drawText(HomeData.degrees(wx.hourTemp.get(i)), x, 792 * k, glanceValueP);
+        }
+        if (hours == 0) c.drawText(Ui.tr("Previsão indisponível", "Forecast unavailable"), 620 * k, 758 * k, glanceBodyP);
+        if (wx.sunrise > 0 && wx.sunset > 0) c.drawText(Ui.tr("Nascer do sol ", "Sunrise ") + Ui.time(wx.sunrise)
+                + Ui.tr(" · Pôr do sol ", " · Sunset ") + Ui.time(wx.sunset), 620 * k, 856 * k, glanceHeadP);
+        c.drawText(Ui.tr("Mercados · ", "Markets · ") + Config.CURRENCY.toUpperCase(Locale.ROOT), 1370 * k, 552 * k, glanceHeadP);
+        for (int i = 0; i < HomeData.coinCount(); i++) {
+            float baseline = (632 + i * 82) * k;
+            c.drawText(HomeData.coinName(i), 1370 * k, baseline, glanceBodyP);
+            glanceValueP.setTextAlign(Paint.Align.RIGHT); c.drawText(HomeData.compact(data.prices[i]), 1824 * k, baseline, glanceValueP); glanceValueP.setTextAlign(Paint.Align.LEFT);
         }
     }
 
@@ -1783,6 +1896,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void setMode(int next) {
         mode = next;
+        if (next == SEARCH) refreshPhoneCodes();
         contentT.target = next == CONTENT ? 1 : 0;
         searchT.target = next == SEARCH ? 1 : 0;
         if (next == SEARCH) {
@@ -1836,6 +1950,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void moved() {
         aimRow(false);
         if (zone == Z_ROW) scheduleHero();
+        if (zone == Z_CHIP) PlaybackPrefetch.warm(getContext(), chipEntry());
         click.move();
         setContentDescription(describe());
         changed();
@@ -2100,6 +2215,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void activate() {
+        if (editing) {
+            finishEditing();
+            return;
+        }
         switch (zone) {
             case Z_ICONS:
                 click.open();
@@ -2186,7 +2305,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The quick panel (sleep timer, picture, headphones), when the player part of the app provides it. */
     private void openQuickPanel() {
-        start(new Intent(activity, SettingsActivity.class));
+        QuickPanel.show(activity);
+    }
+
+    void openRemoteInputs() {
+        if (opening != null) opening.skip();
+        if (inputsReady && running) openInputs(); else pendingInputs = true;
     }
 
     // MARK: - Editing the app row in place
@@ -2257,7 +2381,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         menu.clear();
         menuCard = null;
         Intent live = HomeApps.liveTv(getContext());
-        if (live != null) menu.add(new MenuItem(Ui.tr("TV aberta", "Live TV"), null, false, () -> start(live)));
+        if (live != null) menu.add(new MenuItem(Ui.tr("TV ao vivo", "Live TV"), null, false, () -> start(live)));
         for (HomeApps.Item it : inputs) {
             if (it.kind != HomeApps.INPUT) continue;
             final HomeApps.Item input = it;
@@ -2265,10 +2389,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (!HomeApps.open(activity, input, this, w / 2, h / 2, 1, 1)) showToast(Ui.tr("Não deu para abrir ", "Couldn't open ") + input.label + ".");
             }));
         }
-        if (menu.isEmpty()) {
-            showToast(Ui.tr("Esta TV não tem entradas.", "This TV has no inputs."));
-            return;
-        }
+        setMode(REST);
         menuIndex = 0;
         openOverlay(OV_MENU);
     }
@@ -2307,7 +2428,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private List<HomeApps.Item> allAppsList() {
         List<HomeApps.Item> list = new ArrayList<>(shelf);
         list.addAll(others);
-        if (HomeApps.liveTv(getContext()) != null) list.add(HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("TV aberta", "Live TV"), "live_tv"));
+        if (HomeApps.liveTv(getContext()) != null) list.add(HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("TV ao vivo", "Live TV"), "live_tv"));
         boolean settings = false;
         for (HomeApps.Item it : others) settings |= "com.android.tv.settings".equals(it.pkg) || "com.android.settings".equals(it.pkg);
         if (!settings) list.add(HomeApps.action(HomeApps.ANDROID_SETTINGS, "tv-settings", Ui.tr("Configurações da TV", "TV Settings"), "settings"));
@@ -2463,6 +2584,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         Recs.Pick p = card.pick;
         if (p == null) return;
+        if (StremioLinks.PACKAGE.equals(p.pkg)) { details(card); return; }
         final Context c = getContext().getApplicationContext();
         WORK.execute(() -> {
             Intent intent = null;
@@ -2519,6 +2641,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void openTitle(int id, String kind, String name, String imdb) {
         if (id <= 0) return;
+        if ("person".equals(kind)) { start(new Intent(activity, PersonActivity.class).putExtra("person_id",id).putExtra("person_name",name)); return; }
         Intent intent = new Intent(activity, SourcesActivity.class).putExtra("title_id", id).putExtra("title_kind", kind)
                 .putExtra("title_name", name);
         if (imdb != null && !imdb.isEmpty()) intent.putExtra("imdb", imdb);
@@ -2598,9 +2721,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         Result keepResult = focusedResult();
         HomeApps.Item keepApp = focusedApp();
         sections.clear();
-        Section shows = new Section(Ui.tr("Séries", "Shows"), false), movies = new Section(Ui.tr("Filmes", "Movies"), false);
+        Section shows = new Section(Ui.tr("Séries", "Shows"), false), movies = new Section(Ui.tr("Filmes", "Movies"), false), people = new Section(Ui.tr("Pessoas", "People"), false);
         for (Result res : results) {
-            Section sec = "tv".equals(res.title.kind) ? shows : movies;
+            Section sec = "person".equals(res.title.kind) ? people : "tv".equals(res.title.kind) ? shows : movies;
             if (sec.titles.size() < ROW_RESULTS) sec.titles.add(res);
         }
         Section apps = new Section(Ui.tr("Apps", "Apps"), true);
@@ -2611,6 +2734,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (appFirst && apps.size() > 0) sections.add(apps);
         boolean showsFirst = !shows.titles.isEmpty() && (movies.titles.isEmpty() || shows.titles.get(0).score >= movies.titles.get(0).score);
         for (Section sec : showsFirst ? new Section[] {shows, movies} : new Section[] {movies, shows}) if (sec.size() > 0) sections.add(sec);
+        if (people.size() > 0) sections.add(people);
         if (!appFirst && apps.size() > 0) sections.add(apps);
         float top = RESULTS_TOP;
         for (Section sec : sections) {
@@ -2647,59 +2771,65 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** TMDB search, then where each of the top four plays: a service you have first, else here (Stremio add-ons). */
     private void search() {
-        final String q = query.trim();
-        final int token = searchToken;
-        final Context c = getContext().getApplicationContext();
+        final String q = query.trim(); final int token = searchToken;
         WORK.execute(() -> {
-            List<Result> found = new ArrayList<>();
-            String error = "";
-            try {
-                List<TitleSearch.Title> titles = new ArrayList<>(TitleSearch.searchBoth(q));
-                // How well the name matches what you typed, then how popular it is right now (TMDB's own order
-                // mixes in plot and alternative-title matches).
-                final String typed = normalize(q);
-                java.util.Collections.sort(titles, (a, b) -> Double.compare(rank(b, typed), rank(a, typed)));
-                List<java.util.concurrent.Future<Result>> lookups = new ArrayList<>();
-                int showCount = 0, movieCount = 0;
-                for (TitleSearch.Title t : titles) {
-                    boolean show = "tv".equals(t.kind);
-                    if (show ? showCount >= ROW_RESULTS : movieCount >= ROW_RESULTS) continue;
-                    if (show) showCount++; else movieCount++;
-                    final double base = rank(t, typed);
-                    lookups.add(WHERE.submit(() -> {
-                        Result res = where(c, t);
-                        res.score = base + (!res.pkg.isEmpty() && !res.pkg.equals("com.stremio.one") ? 0.5 : 0);
-                        return res;
-                    }));
-                }
-                for (java.util.concurrent.Future<Result> f : lookups) {
-                    if (token != searchToken) break;
-                    try {
-                        found.add(f.get(6, java.util.concurrent.TimeUnit.SECONDS));
-                    } catch (Exception ignored) {
-                    }
-                }
-                java.util.Collections.sort(found, (a, b) -> Double.compare(b.score, a.score));
-            } catch (Exception e) {
-                String m = String.valueOf(e.getMessage());
-                error = m.contains("key") ? Ui.tr("A chave TMDB não funcionou. Confira em Configurações.", "The TMDB key didn't work. Check it in Settings.")
-                        : Ui.tr("Não deu para buscar agora. Tente de novo.", "Couldn't search right now. Try again.");
-            }
-            final List<Result> ready = found;
-            final String failure = error;
+            List<TitleSearch.Title> titles = new ArrayList<>(); String error = "";
+            try { if (token == searchToken) titles = TitleSearch.searchBoth(q); }
+            catch (Exception failure) { error = Setup.hasKey() ? Ui.tr("Não foi possível buscar. Tente novamente.", "Cannot search. Try again.")
+                    : Ui.tr("Configure sua chave TMDB em Ajustes.", "Set your TMDB key in Settings."); }
+            titles.sort((a,b) -> Double.compare(rank(b,q),rank(a,q)));
+            List<TitleSearch.Title> ready = titles; String message = error;
             handler.post(() -> {
                 if (token != searchToken) return;
-                searching = false;
-                searchError = failure;
-                results.clear();
-                results.addAll(ready);
-                for (Result res : results) fitResult(res);
-                layoutSections();
+                searching = false; searchError = message; results.clear();
+                appendSearch(ready, token, q);
                 if (zone == Z_RESULTS && sections.isEmpty()) zone = Z_KEYS;
-                aimRow(true);
-                changed();
+            });
+            if (token != searchToken) return;
+            WORK.execute(() -> {
+                if (token != searchToken) return;
+                try { List<TitleSearch.Title> extra = AddonCatalogs.search(getContext(),q);
+                    handler.post(() -> { if (token == searchToken) appendSearch(extra,token,q); });
+                } catch (Exception ignored) {}
+            });
+            WORK.execute(() -> {
+                if (token != searchToken) return;
+                try {
+                    List<TitlePage.Person> found = People.search(q);
+                    handler.post(() -> {
+                        if (token != searchToken) return;
+                        for (TitlePage.Person p : found) {
+                            Result res = new Result(); TitleSearch.Title t = new TitleSearch.Title();
+                            t.id=p.id;t.kind="person";t.name=p.name;t.poster=p.photo;t.backdrop="";t.year="";
+                            res.title=t;res.key="person:"+p.id;res.where=p.role;res.score=rank(t,q);
+                            String photo=p.photo;res.source=()->photo;fitResult(res);results.add(res);
+                        }
+                        layoutSections();aimRow(false);changed();
+                    });
+                } catch (Exception ignored) {}
             });
         });
+    }
+    private void appendSearch(List<TitleSearch.Title> titles, int token, String query) {
+        java.util.Set<String> seen = new java.util.HashSet<>(); for (Result r : results) seen.add(r.key);
+        for (TitleSearch.Title t : titles) {
+            String key="search:"+t.kind+":"+t.id; if (!seen.add(key) || results.size()>=48) continue;
+            Result res=new Result();res.title=t;res.key=key;res.where=t.year;res.score=rank(t,query);
+            String picture=t.backdrop.isEmpty()?t.poster:t.backdrop;res.source=()->picture;fitResult(res);results.add(res);
+            WHERE.execute(() -> {
+                if (token!=searchToken) return;
+                Result provider=where(getContext(),t);
+                handler.post(() -> {
+                    if(token!=searchToken)return;
+                    res.where=provider.where;res.pkg=provider.pkg;res.score=rank(t,query)+(!res.pkg.isEmpty()&&!res.pkg.equals(StremioLinks.PACKAGE)?.5:0);
+                    fitResult(res);
+                    if (zone!=Z_RESULTS) {results.sort((a,b)->Double.compare(b.score,a.score));layoutSections();}
+                    changed();
+                });
+            });
+        }
+        if (zone!=Z_RESULTS) results.sort((a,b)->Double.compare(b.score,a.score));
+        layoutSections();aimRow(false);changed();
     }
 
     /**
@@ -2707,20 +2837,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * with it, contains it) and how popular it is right now (TMDB popularity and votes, log scale) both count, so a
      * famous "VisionQuest" beats four obscure films called exactly "Vision".
      */
-    static double rank(TitleSearch.Title t, String typed) {
-        String name = normalize(t.name);
-        double match = 0;
-        if (name.equals(typed)) match = 2;
-        else if (name.startsWith(typed)) match = 1.5;
-        else {
-            for (String word : t.name.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
-                if (!word.isEmpty() && normalize(word).startsWith(typed)) { match = 1; break; }
-            }
-            if (match == 0 && name.contains(typed)) match = 0.5;
-        }
-        // Votes say "people know this"; popularity says "people look at it this week" (and spikes for daily soaps).
-        return match + 0.6 * Math.log10(1 + Math.max(0, t.popularity)) + 0.6 * Math.log10(1 + Math.max(0, t.votes));
-    }
+    static double rank(TitleSearch.Title t, String typed) { return TitleSearch.rank(t, typed); }
 
     /** Where a title plays: a streaming service you have (My services), else here through your add-ons. */
     private static Result where(Context c, TitleSearch.Title t) {

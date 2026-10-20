@@ -12,3 +12,8 @@ out/
 .DS_Store
 lumatv-key-backup.enc
 latest.json
+
+# Local development and host test dependencies
+.claude/
+.test-libs/
+TV-LOCAL.md

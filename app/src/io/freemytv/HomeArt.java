@@ -64,13 +64,15 @@ final class HomeArt {
     Bitmap card(String key, Source source) {
         Bitmap b = cards.get(key);
         if (b != null || source == null) return b;
+        final int requested = epoch;
         load("card:" + key, () -> {
             Bitmap full = fetch(context, source.find(), false);
             if (full == null) return;
             Bitmap card = crop(full, CARD_W, CARD_H);
             Bitmap gpu = card.copy(Bitmap.Config.HARDWARE, false);
             if (gpu != null) card.recycle(); else gpu = card;
-            cards.put(key, gpu);
+            final Bitmap ready = gpu;
+            main.post(() -> { if (requested == epoch) cards.put(key, ready); else ready.recycle(); });
         });
         return null;
     }
@@ -78,6 +80,7 @@ final class HomeArt {
     Hero hero(String key, Source source) {
         Hero h = heroes.get(key);
         if (h != null || source == null) return h;
+        final int requested = epoch;
         load("hero:" + key, () -> {
             Bitmap full = fetch(context, source.find(), true);
             if (full == null) return;
@@ -92,7 +95,8 @@ final class HomeArt {
             }
             Bitmap gpu = out.copy(Bitmap.Config.HARDWARE, false);
             if (gpu != null && gpu != out) out.recycle();
-            heroes.put(key, new Hero(gpu != null ? gpu : out, soft));
+            final Bitmap ready = gpu != null ? gpu : out;
+            main.post(() -> { if (requested == epoch) heroes.put(key, new Hero(ready, soft)); else ready.recycle(); });
         });
         return null;
     }

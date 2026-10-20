@@ -11,6 +11,14 @@ final class EpisodeSequence {
     }
     static SeriesEpisodes.Episode next(ContinueWatching.Entry current, Loader loader, String today) throws Exception {
         if (current == null || !"tv".equals(current.kind) || current.tmdb <= 0 || current.episode <= 0) return null;
+        if (EpisodeMap.available(current.imdb)) {
+            for (int number : EpisodeMap.seasons(current.imdb)) {
+                if (current.season == 0 ? number != 0 : number == 0 || number < current.season) continue;
+                for (SeriesEpisodes.Episode e : EpisodeMap.episodes(current.imdb, number, java.util.Collections.emptyList(), today))
+                    if (!e.future && (number != current.season || e.number > current.episode)) return e;
+            }
+            return null;
+        }
         String base = "/tv/" + current.tmdb;
         String language = "?language=" + (Ui.en ? "en-US" : "pt-BR");
         List<SeriesEpisodes.Episode> episodes = SeriesEpisodes.episodes(

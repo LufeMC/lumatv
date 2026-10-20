@@ -28,8 +28,10 @@ final class Ui {
     static Typeface thin, light, displayMedium, displaySemibold, regular, medium, semibold;
     private static boolean loaded;
     private static volatile Context context;
-    private static final Rect BOUNDS = new Rect();
-    private static final RectF OVAL = new RectF();
+    private static final class Drawing {
+        static final Rect BOUNDS = new Rect();
+        static final RectF OVAL = new RectF();
+    }
 
     static synchronized void init(Context c) {
         if (loaded) return;
@@ -97,9 +99,9 @@ final class Ui {
 
     /** Height of capital letters (and digits) above the baseline. */
     static float cap(Paint p) {
-        synchronized (BOUNDS) {
-            p.getTextBounds("H8", 0, 2, BOUNDS);
-            return -BOUNDS.top;
+        synchronized (Drawing.BOUNDS) {
+            p.getTextBounds("H8", 0, 2, Drawing.BOUNDS);
+            return -Drawing.BOUNDS.top;
         }
     }
 
@@ -111,9 +113,9 @@ final class Ui {
     /** Left bearing of the first character (large, thin fonts start a little inward). */
     static float leftBearing(Paint p, String s) {
         if (s.isEmpty()) return 0;
-        synchronized (BOUNDS) {
-            p.getTextBounds(s, 0, 1, BOUNDS);
-            return BOUNDS.left;
+        synchronized (Drawing.BOUNDS) {
+            p.getTextBounds(s, 0, 1, Drawing.BOUNDS);
+            return Drawing.BOUNDS.left;
         }
     }
 
@@ -154,7 +156,7 @@ final class Ui {
 
     /** Spinning arc (work in progress). */
     static void spinner(Canvas c, float cx, float cy, float r, float seconds, Paint stroke) {
-        OVAL.set(cx - r, cy - r, cx + r, cy + r);
-        c.drawArc(OVAL, (seconds * 360f) % 360f, 270f, false, stroke);
+        Drawing.OVAL.set(cx - r, cy - r, cx + r, cy + r);
+        c.drawArc(Drawing.OVAL, (seconds * 360f) % 360f, 270f, false, stroke);
     }
 }

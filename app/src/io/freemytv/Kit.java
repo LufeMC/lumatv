@@ -57,7 +57,7 @@ final class Kit {
         static Theme night() { return new Theme(false); }
         static Theme day() { return new Theme(true); }
 
-        /** Prefs.LOOK: always day, always night, or (default) day until sunset at the TV's location. */
+        /** Use the selected appearance. Dark appearance is the default. */
         static Theme current(Context c) {
             String look = Prefs.look(c);
             if ("day".equals(look)) return day();

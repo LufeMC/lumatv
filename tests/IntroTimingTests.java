@@ -8,7 +8,7 @@ import java.lang.reflect.Field;
 import androidx.media3.exoplayer.ExoPlayer;
 
 /** Compare public marker times with displayed episode frames. */
-public class IntroTimingTests extends Instrumentation {
+public class IntroTimingTests extends TvTest {
     private SourcesActivity title;
     private PlayerActivity activity;
     private Object value(String name) throws Exception { Field field = PlayerActivity.class.getDeclaredField(name); field.setAccessible(true); return field.get(activity); }

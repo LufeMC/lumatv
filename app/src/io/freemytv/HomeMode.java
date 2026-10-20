@@ -350,7 +350,7 @@ final class HomeMode {
             String next = RemoteKeys.withService(services, component);
             boolean changed = false;
             if (!next.equals(services)) {
-                adb.shell("settings put secure enabled_accessibility_services " + next);
+                adb.shell("settings put secure enabled_accessibility_services " + quote(next));
                 changed = true;
             }
             if (!"1".equals(enabled)) {
@@ -371,13 +371,13 @@ final class HomeMode {
             String component = RemoteKeys.component(c);
             String services = adb.shell("settings get secure enabled_accessibility_services").trim();
             if (!s.has("a11yServices") && !RemoteKeys.contains(services, component)) return;
-            String saved = s.has("a11yServices") ? s.optString("a11yServices") : services;
+            String saved = s.has("a11yServices") ? s.optString("a11yServices") : RemoteKeys.withoutService(services, component);
             String restored = RemoteKeys.restoreServices(saved, services, component);
             if (restored == null) adb.shell("settings delete secure enabled_accessibility_services");
-            else adb.shell("settings put secure enabled_accessibility_services " + restored);
+            else adb.shell("settings put secure enabled_accessibility_services " + quote(restored));
             String enabled = RemoteKeys.restoreEnabled(s.optString("a11yEnabled", "null"), restored);
             if (enabled == null) adb.shell("settings delete secure accessibility_enabled");
-            else adb.shell("settings put secure accessibility_enabled " + enabled);
+            else adb.shell("settings put secure accessibility_enabled " + quote(enabled));
             JSONObject latest = state(c);
             latest.remove("a11yServices");
             latest.remove("a11yEnabled");
@@ -385,6 +385,11 @@ final class HomeMode {
         } catch (Exception e) {
             AppLog.w("remote buttons not turned off: " + e.getMessage());
         }
+    }
+
+    /** A setting's value as one shell word (other services' names may hold "$" for inner classes). */
+    static String quote(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
     }
 
     /** The first mapped button in LumaTV mode: make sure the service is on (quietly; no prompt from here). */

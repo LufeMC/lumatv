@@ -113,9 +113,9 @@ final class Prefs {
         }
     }
 
-    /** The look setting: "sunset" (default: day look by day, night look after sunset), "day" or "night". */
+    /** Dark appearance is the default. The user can select daylight or automatic appearance. */
     static String look(Context c) {
-        String v = get(c, HOME_UI).getString(LOOK, "sunset");
-        return "day".equals(v) || "night".equals(v) ? v : "sunset";
+        String v = get(c, HOME_UI).getString(LOOK, "night");
+        return "day".equals(v) || "sunset".equals(v) ? v : "night";
     }
 }

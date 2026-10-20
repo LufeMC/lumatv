@@ -5,7 +5,7 @@ import android.os.Bundle;
 import org.json.JSONObject;
 
 /** Check marker identity, limits, and countdown behavior without network requests. */
-public class IntroDataTests extends Instrumentation {
+public class IntroDataTests extends TvTest {
     private int checks;
     private void check(boolean valid, String message) { if (!valid) throw new AssertionError(message); checks++; }
     private JSONObject response() throws Exception {

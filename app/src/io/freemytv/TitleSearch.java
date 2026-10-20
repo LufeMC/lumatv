@@ -30,6 +30,21 @@ final class TitleSearch {
                 : Ui.tr("Reproduzir no Stremio", "Play in Stremio"); }
     }
 
+    static String normalized(String value) {
+        return java.text.Normalizer.normalize(value.toLowerCase(java.util.Locale.ROOT), java.text.Normalizer.Form.NFD).replaceAll("[^\\p{L}\\p{N}]", "");
+    }
+    static double rank(Title t, String query) {
+        String typed = normalized(query), name = normalized(t.name); double match = 0;
+        if (name.equals(typed)) match = 2;
+        else if (name.startsWith(typed)) match = 1.5;
+        else {
+            for (String word : t.name.toLowerCase(java.util.Locale.ROOT).split("[^\\p{L}\\p{N}]+"))
+                if (!word.isEmpty() && normalized(word).startsWith(typed)) { match = 1; break; }
+            if (match == 0 && name.contains(typed)) match = .5;
+        }
+        return match + .6 * Math.log10(1 + Math.max(0,t.popularity)) + .6 * Math.log10(1 + Math.max(0,t.votes));
+    }
+
     private static final java.util.LinkedHashMap<String, String> responses = new java.util.LinkedHashMap<>();
     private static final java.util.Map<String, Long> fetched = new java.util.HashMap<>();
     private TitleSearch() {}
@@ -63,7 +78,8 @@ final class TitleSearch {
                 result.addAll(parse(list));
             } catch (java.util.concurrent.ExecutionException e) {
                 failure = e.getCause() instanceof Exception ? (Exception) e.getCause() : e;
-            }
+            } catch (java.util.concurrent.TimeoutException e) { ((java.util.concurrent.Future<?>) part[0]).cancel(true); failure=e;
+            } catch (InterruptedException e) { shows.cancel(true);movies.cancel(true);Thread.currentThread().interrupt();throw e; }
         }
         if (result.isEmpty() && failure != null) throw failure;
         return result;

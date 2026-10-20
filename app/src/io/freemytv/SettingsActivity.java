@@ -89,6 +89,7 @@ public class SettingsActivity extends TvActivity {
         super.onCreate(savedInstanceState);
         Watchdog.install(this);
         Ui.init(this);
+        Setup.migrateConfig(this);
         TvSync.start(this);
         ModeJob.scheduleDaily(this);
         build(getIntent().getIntExtra(EXTRA_SECTION, HOME), null);
@@ -456,7 +457,7 @@ public class SettingsActivity extends TvActivity {
                 String busyText = s.optString("busy");
                 boolean busy = !busyText.isEmpty() || pendingAt != 0 && SystemClock.uptimeMillis() - pendingAt < 10_000;
                 if (!busyText.isEmpty()) pendingAt = 0;
-                free.set(freeOn, Ui.tr("Sem anúncios. Segue o pôr do sol.", "No ads. Follows the sunset.") + memory(s));
+                free.set(freeOn, Ui.tr("Sem anúncios. Busca em destaque.", "No ads. Easy search.") + memory(s));
                 original.set(!freeOn, original.desc.getText().toString());
                 String target = pendingMode != null ? pendingMode : freeOn ? HomeMode.ORIGINAL : HomeMode.FREE;
                 String shown = busyText.isEmpty() ? Ui.tr("Começando…", "Starting…") : busyText;
@@ -864,7 +865,7 @@ public class SettingsActivity extends TvActivity {
                 spacer(body, 32);
                 flag(body, Ui.tr("Próximo episódio automático", "Autoplay next episode"), null, Prefs.AUTOPLAY);
                 flag(body, Ui.tr("Igualar a taxa de quadros da TV", "Match the TV’s refresh rate"),
-                        Ui.tr("Filmes a 24 quadros sem trancos.", "Films at 24 frames per second play smoothly."), Prefs.MATCH_FRAME_RATE);
+                        Ui.tr("Filmes a 24 quadros sem trancos.", "Use a matching rate when the TV supports it."), Prefs.MATCH_FRAME_RATE);
                 flag(body, Ui.tr("Perguntar “Ainda está assistindo?” depois da meia-noite", "Ask “Still watching?” after midnight"),
                         Ui.tr("Depois de 3 episódios seguidos.", "After 3 episodes in a row."), Prefs.STILL_WATCHING);
             }
@@ -1013,7 +1014,7 @@ public class SettingsActivity extends TvActivity {
             final LinearLayout rest = Kit.row(SettingsActivity.this, LinearLayout.VERTICAL);
             final TextView status;
             List<TvSync.Found> found = new ArrayList<>();
-            String codeKey = "", gridKey = "";
+            String codeKey = "", gridKey;
 
             {
                 title(body, Ui.tr("Suas TVs", "Your TVs"));
@@ -1184,6 +1185,7 @@ public class SettingsActivity extends TvActivity {
         Kit.Glyph tv = new Kit.Glyph(this, Kit.Glyph.TV, Kit.states(0xCC000000 | (t.ink & 0xFFFFFF), t.onFocus));
         card.addView(tv, new LinearLayout.LayoutParams(px(48), px(48)));
         LinearLayout words = Kit.row(this, LinearLayout.VERTICAL);
+        words.setDuplicateParentStateEnabled(true);
         LinearLayout.LayoutParams wp = Kit.weight();
         wp.leftMargin = px(28);
         card.addView(words, wp);
@@ -1316,7 +1318,7 @@ public class SettingsActivity extends TvActivity {
                         Ui.tr("Instala de madrugada, com a TV em repouso.", "Installs at night while the TV rests."),
                         Updater.automaticOn(SettingsActivity.this), on -> Updater.setAutomatic(SettingsActivity.this, on));
                 info(body, Ui.tr("Versão", "Version"), Config.VERSION_NAME + " · " + Config.COMMIT);
-                problem = info(body, Ui.tr("Último problema", "Last problem"), "").value;
+                problem = info(body, Ui.tr("Registro de reprodução", "Playback log"), "").value;
                 JSONObject m = HomeMode.state(SettingsActivity.this).optJSONObject("metrics");
                 String speed = compare(m, "homeMs", " ms"), mem = compare(m, "homePssMB", " MB");
                 if (!speed.isEmpty()) info(body, Ui.tr("Botão Início", "Home button"), speed);
@@ -1763,20 +1765,24 @@ public class SettingsActivity extends TvActivity {
     /** Work off the main thread; the result comes back to this page only if it's still the one showing. */
     private <T> void load(Callable<T> job, Consumer<T> done) {
         final int gen = generation;
-        final Page owner = current();
-        work.execute(() -> {
-            T result;
-            try {
-                result = job.call();
-            } catch (Exception e) {
-                AppLog.w("settings: " + e.getClass().getSimpleName());
-                return;
-            }
-            final T r = result;
-            handler.post(() -> {
-                if (isDestroyed() || gen != generation) return;
-                if (owner != null && !stack.contains(owner) && owner != page) return;
-                done.accept(r);
+        // Page constructors finish before the callback owner is selected.
+        handler.post(() -> {
+            if (isDestroyed() || gen != generation) return;
+            final Page owner = current();
+            work.execute(() -> {
+                T result;
+                try {
+                    result = job.call();
+                } catch (Exception e) {
+                    AppLog.w("settings: " + e.getClass().getSimpleName());
+                    return;
+                }
+                final T r = result;
+                handler.post(() -> {
+                    if (isDestroyed() || gen != generation) return;
+                    if (owner != null && !stack.contains(owner) && owner != page) return;
+                    done.accept(r);
+                });
             });
         });
     }

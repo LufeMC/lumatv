@@ -6,7 +6,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.List;
 
-public class StreamDataTests extends Instrumentation {
+public class StreamDataTests extends TvTest {
     private int checks;
     private void check(boolean value, String label) { if (!value) throw new AssertionError(label); checks++; }
     @Override public void onCreate(Bundle args) { super.onCreate(args); if (android.app.Application.getProcessName().equals("io.freemytv")) start(); }

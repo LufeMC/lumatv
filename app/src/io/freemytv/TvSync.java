@@ -62,6 +62,8 @@ final class TvSync {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final ExecutorService WORK = Executors.newSingleThreadExecutor();
+    /** Turning the server on and off (a socket bind): off the main thread, never behind a slow sync. */
+    private static final ExecutorService CONTROL = Executors.newSingleThreadExecutor();
     private static final String[] PLAYBACK_KEYS = {Prefs.AUDIO_LANGUAGE, Prefs.SUBTITLE_LANGUAGE, Prefs.SUBTITLE_MODE,
             Prefs.SUBTITLE_SIZE, Prefs.SUBTITLE_BACKGROUND, Prefs.AUTO_SYNC, Prefs.AUTOPLAY, Prefs.MATCH_FRAME_RATE,
             Prefs.STILL_WATCHING};
@@ -137,6 +139,7 @@ final class TvSync {
 
     /** When :home starts (home screen, settings): listen for paired TVs and sync if it's been a while. Cheap if unpaired. */
     static void start(Context c) {
+        if (TestState.active) return;
         Context app = c.getApplicationContext();
         refreshListening(app);
         if (!peers(app).isEmpty() && anyCategory(app) && System.currentTimeMillis() - lastSync(app) > 6 * 60 * 60_000L) {
@@ -144,9 +147,13 @@ final class TvSync {
         }
     }
 
+    /** Server on while paired with sync on (opening a socket stays off the main thread). */
     private static void refreshListening(Context c) {
-        if (!peers(c).isEmpty() && anyCategory(c)) PhoneLink.hold(c, "sync"); else PhoneLink.release("sync");
-        MAIN.post(() -> advertise(c.getApplicationContext()));
+        Context app = c.getApplicationContext();
+        CONTROL.execute(() -> {
+            if (!peers(app).isEmpty() && anyCategory(app)) PhoneLink.hold(app, "sync"); else PhoneLink.release("sync");
+            MAIN.post(() -> advertise(app));
+        });
     }
 
     static void serverStarted(Context c) { MAIN.post(() -> advertise(c)); }
@@ -155,6 +162,7 @@ final class TvSync {
 
     /** Quietly syncs with every paired TV (after settings change, or a while after start). */
     static void syncSoon(Context c) {
+        if (TestState.active) return;
         Context app = c.getApplicationContext();
         if (peers(app).isEmpty() || !anyCategory(app)) return;
         WORK.execute(() -> {
@@ -174,6 +182,7 @@ final class TvSync {
 
     /** Main thread: advertise this TV while the server runs and someone could want it (paired, or pairing open). */
     private static void advertise(Context c) {
+        if (TestState.active) return;
         NsdManager nsd = c.getSystemService(NsdManager.class);
         if (nsd == null) return;
         boolean want = PhoneLink.running() && (pairingOpen || !peers(c).isEmpty() && anyCategory(c));
@@ -286,16 +295,22 @@ final class TvSync {
     static synchronized void openPairing(Context c) {
         pairingOpen = true;
         failures = 0;
-        PhoneLink.hold(c, "pairing");
-        MAIN.post(() -> advertise(c.getApplicationContext()));
+        Context app = c.getApplicationContext();
+        CONTROL.execute(() -> {
+            PhoneLink.hold(app, "pairing");
+            MAIN.post(() -> advertise(app));
+        });
     }
 
     static synchronized void closePairing(Context c) {
         pairingOpen = false;
         pin = null;
         pending = null;
-        PhoneLink.release("pairing");
-        MAIN.post(() -> advertise(c.getApplicationContext()));
+        Context app = c.getApplicationContext();
+        CONTROL.execute(() -> {
+            PhoneLink.release("pairing");
+            MAIN.post(() -> advertise(app));
+        });
     }
 
     /** The code to show, and for which TV, or null. */
@@ -840,26 +855,8 @@ final class TvSync {
 
     // MARK: - Crypto helpers
 
-    static byte[] seal(byte[] secret, String aad, byte[] plain) throws Exception {
-        byte[] iv = new byte[12];
-        RANDOM.nextBytes(iv);
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(Pake.hmac(secret, "encrypt"), "AES"), new GCMParameterSpec(128, iv));
-        cipher.updateAAD(aad.getBytes(StandardCharsets.UTF_8));
-        byte[] ct = cipher.doFinal(plain);
-        byte[] out = new byte[12 + ct.length];
-        System.arraycopy(iv, 0, out, 0, 12);
-        System.arraycopy(ct, 0, out, 12, ct.length);
-        return out;
-    }
-
-    static byte[] open(byte[] secret, String aad, byte[] sealed) throws Exception {
-        if (sealed.length < 28) throw new IOException("short");
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(Pake.hmac(secret, "encrypt"), "AES"), new GCMParameterSpec(128, sealed, 0, 12));
-        cipher.updateAAD(aad.getBytes(StandardCharsets.UTF_8));
-        return cipher.doFinal(sealed, 12, sealed.length - 12);
-    }
+    static byte[] seal(byte[] secret, String aad, byte[] plain) throws Exception { return SyncCipher.seal(secret, aad, plain); }
+    static byte[] open(byte[] secret, String aad, byte[] sealed) throws Exception { return SyncCipher.open(secret, aad, sealed); }
 
     static String hex(byte[] b) {
         StringBuilder sb = new StringBuilder(b.length * 2);

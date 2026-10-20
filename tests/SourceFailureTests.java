@@ -12,7 +12,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /** Exercise controlled add-on failures without changing the user's account. */
-public class SourceFailureTests extends Instrumentation {
+public class SourceFailureTests extends TvTest {
     private int checks;
     private void check(boolean value, String name) { if (!value) throw new AssertionError(name); checks++; }
     @Override public void onCreate(Bundle args) { super.onCreate(args); if (android.app.Application.getProcessName().equals("io.freemytv")) start(); }

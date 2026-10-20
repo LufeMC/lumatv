@@ -49,6 +49,21 @@ final class PlaybackSession {
         discovering = pending;
         if (sourcesChanged != null) sourcesChanged.run();
     }
+    boolean hasMore() {
+        Set<String> tried = new HashSet<>(); for (AddonStreams.Source s : sources) tried.add(s.url);
+        for (AddonStreams.Source s : all) if (!tried.contains(s.url) && s.probeState != SourceProbe.FAILED && s.unsupported == null) return true;
+        return false;
+    }
+    boolean queueMore() {
+        Set<String> tried = new HashSet<>(); for (AddonStreams.Source s : sources) tried.add(s.url);
+        List<AddonStreams.Source> remaining = new ArrayList<>();
+        for (AddonStreams.Source s : all) if (!tried.contains(s.url)) remaining.add(s);
+        List<AddonStreams.Source> batch = PlaybackPlan.automatic(remaining);
+        if (batch.isEmpty()) return false;
+        int previous = sources.size(); sources.addAll(batch);
+        if (index >= previous) index = previous - 1;
+        return true;
+    }
     AddonStreams.Source next() {
         if (index + 1 < sources.size()) return sources.get(++index);
         if (!discovering) index = sources.size();

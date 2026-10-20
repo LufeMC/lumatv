@@ -11,7 +11,7 @@ import java.lang.reflect.Method;
 import java.util.Collections;
 
 /** Check intro controls and system media routing through the actual Android player. */
-public class IntroPlayerTests extends Instrumentation {
+public class IntroPlayerTests extends TvTest {
     private PlayerActivity activity;
     private SourcesActivity anchor;
     private int checks;

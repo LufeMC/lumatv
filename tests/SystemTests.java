@@ -24,7 +24,7 @@ import java.nio.charset.StandardCharsets;
  * Nothing here changes the TV's settings or the app's own data: files and preferences go to isolated test copies.
  * adb shell am instrument -w io.freemytv.tests/io.freemytv.SystemTests
  */
-public class SystemTests extends Instrumentation {
+public class SystemTests extends TvTest {
     private int checks;
 
     private void check(boolean value, String name) {
@@ -53,6 +53,7 @@ public class SystemTests extends Instrumentation {
         Context c = isolated();
         try {
             accessibilitySetting();
+            appearance(c);
             remoteKeys();
             watchdog(c);
             qr();
@@ -73,6 +74,17 @@ public class SystemTests extends Instrumentation {
             }
             Watchdog.clear(c);
         }
+    }
+
+    private void appearance(Context c) {
+        Prefs.get(c, Prefs.HOME_UI).edit().remove(Prefs.LOOK).commit();
+        check("night".equals(Prefs.look(c)), "dark appearance is the default");
+        HomeData.Weather wx = new HomeData.Weather();
+        check(Landscape.now(c, wx, System.currentTimeMillis()) == Landscape.NIGHT, "default landscape stays dark during daylight");
+        Prefs.get(c, Prefs.HOME_UI).edit().putString(Prefs.LOOK, "day").commit();
+        check(Landscape.now(c, wx, System.currentTimeMillis()) == Landscape.DAY, "the light appearance remains available");
+        Prefs.get(c, Prefs.HOME_UI).edit().putString(Prefs.LOOK, "sunset").commit();
+        check("sunset".equals(Prefs.look(c)), "automatic appearance remains available");
     }
 
     /** LumaTV adds RemoteKeys to enabled_accessibility_services; Original puts back exactly what was there. */
@@ -98,6 +110,8 @@ public class SystemTests extends Instrumentation {
         String added = other + ":com.new/.Service:" + me;
         check((other + ":com.new/.Service").equals(RemoteKeys.restoreServices(other, added, me)), "keeps a service added later");
         check(RemoteKeys.restoreServices(other, me, me) == null, "the other service was removed later: nothing left");
+        check(other.equals(RemoteKeys.restoreServices(other + ":" + me, other + ":" + me, me)), "never puts ours back");
+        check(RemoteKeys.restoreServices(me, me, me) == null, "saved value was only ours: delete");
         check(RemoteKeys.restoreEnabled("0", null).equals("0"), "accessibility_enabled back to 0");
         check(RemoteKeys.restoreEnabled("null", null) == null, "accessibility_enabled unset again");
         check(RemoteKeys.restoreEnabled("0", other).equals("1"), "stays on while another service remains");

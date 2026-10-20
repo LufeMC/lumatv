@@ -15,10 +15,17 @@ import android.widget.TextView;
  * back to the TV's original one.
  */
 public class HomeActivity extends Activity {
+    @Override public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+        return getApplicationContext().getSharedPreferences(name, mode);
+    }
+    @Override public java.io.File getFilesDir() { return getApplicationContext().getFilesDir(); }
     static final int VOICE = 20;
     static java.lang.ref.WeakReference<HomeActivity> visible = new java.lang.ref.WeakReference<>(null);
     private HomeView home;
     long fontsMs, viewMs;
+    private final android.os.Handler remote = new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean quickShown;
+    private final Runnable quick = () -> { quickShown = true; QuickPanel.show(this); };
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -26,22 +33,18 @@ public class HomeActivity extends Activity {
         if (Watchdog.crashedTooOften(this)) {
             // Don't try to draw again: only show a notice while the main process restores the original home screen.
             HomeMode.requestRevertHome(this);
-            TextView t = new TextView(this);
-            t.setText(Ui.tr("O Início da LumaTV teve um problema.\nVoltando para o Início original da TV…",
-                    "LumaTV's home screen ran into a problem.\nGoing back to the TV's original home screen…"));
-            t.setTextColor(Color.WHITE);
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
-            t.setGravity(Gravity.CENTER);
-            t.setBackgroundColor(Color.rgb(7, 11, 30));
-            setContentView(t);
+            setContentView(CrashFallback.create(this));
             return;
+
         }
         long phase = android.os.SystemClock.elapsedRealtime();
         Ui.init(this); fontsMs = android.os.SystemClock.elapsedRealtime() - phase;
+        Setup.migrateConfig(this);
         phase = android.os.SystemClock.elapsedRealtime();
         home = new HomeView(this); viewMs = android.os.SystemClock.elapsedRealtime() - phase;
         setContentView(home);
         getWindow().setBackgroundDrawable(null);
+        if (RemoteKeys.TARGET_INPUTS.equals(getIntent().getStringExtra(RemoteKeys.EXTRA_OPEN))) home.openRemoteInputs();
         if (getIntent().getBooleanExtra("play_opening", false)) home.playOpening();
     }
 
@@ -56,10 +59,17 @@ public class HomeActivity extends Activity {
         super.onPause();
     }
 
+    @Override protected void onStop() {
+        if (home != null) home.releaseHiddenArtwork();
+        super.onStop();
+    }
+
     /** Home button pressed on the home screen: back to the entry state (focus on the first app, sheet closed). */
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        setIntent(intent);
         if (home != null) home.reset(true);
+        if (home != null && RemoteKeys.TARGET_INPUTS.equals(intent.getStringExtra(RemoteKeys.EXTRA_OPEN))) home.openRemoteInputs();
         if (home != null && intent.getBooleanExtra("play_opening", false)) home.playOpening();
     }
 
@@ -71,11 +81,17 @@ public class HomeActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        remote.removeCallbacksAndMessages(null);
         if (home != null) home.destroy();
         super.onDestroy();
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_SETTINGS) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) { quickShown = false; remote.postDelayed(quick, android.view.ViewConfiguration.getLongPressTimeout()); }
+            if (event.getAction() == KeyEvent.ACTION_UP) { remote.removeCallbacks(quick); if (!quickShown) startActivity(new Intent(this, SettingsActivity.class)); }
+            return true;
+        }
         if (home != null && home.onKey(event)) return true;
         return super.dispatchKeyEvent(event);
     }

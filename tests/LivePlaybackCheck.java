@@ -9,7 +9,7 @@ import java.lang.reflect.Field;
 import androidx.media3.exoplayer.ExoPlayer;
 
 /** Verify the reported episode through the actual authorized account. */
-public class LivePlaybackCheck extends Instrumentation {
+public class LivePlaybackCheck extends TvTest {
     private int sustainedSeconds = 60;
     private Activity title;
     private PlayerActivity player;
@@ -61,7 +61,7 @@ public class LivePlaybackCheck extends Instrumentation {
             runOnMainSync(() -> { try {
                 if (!(Boolean) field(player, "videoRendered") || !(Boolean) field(player, "audioAdvancing")) throw new AssertionError("Video and audio were not both verified");
                 java.lang.reflect.Method controls = PlayerActivity.class.getDeclaredMethod("showControls"); controls.setAccessible(true); controls.invoke(player);
-                ((android.view.View) field(player, "pause")).requestFocus();
+                ((android.view.View) field(player, "seek")).requestFocus();
             } catch (Exception error) { throw new RuntimeException(error); } });
             key(android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
             long previewStart = SystemClock.elapsedRealtime(); boolean[] previewReady = {false};

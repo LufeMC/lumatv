@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 /** Check metadata parsing and app routing without starting video playback. */
-public class SearchDataTests extends Instrumentation {
+public class SearchDataTests extends TvTest {
     private int checks;
     private void check(boolean value, String label) { if (!value) throw new AssertionError(label); checks++; }
     private void rejects(Runnable action, String label) {

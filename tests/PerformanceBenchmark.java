@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
 
 /** Measure the same home workload before and after changes. */
-public class PerformanceBenchmark extends Instrumentation {
+public class PerformanceBenchmark extends TvTest {
     private String label;
     private Activity home;
     @Override public void onCreate(Bundle args) {
@@ -38,16 +38,20 @@ public class PerformanceBenchmark extends Instrumentation {
             while (!contentReady[0] && SystemClock.elapsedRealtime() < readyEnd) {
                 runOnMainSync(() -> {
                     try {
-                        ContinueRow row = (ContinueRow) field(view, "continueRow");
-                        android.widget.LinearLayout cards = (android.widget.LinearLayout) field(row, "cards");
-                        contentReady[0] = !((java.util.List<?>) field(view, "shelf")).isEmpty() && cards.getChildCount() > 0
-                                && ((android.widget.ImageView) ((android.widget.LinearLayout) cards.getChildAt(0)).getChildAt(0)).getDrawable() != null;
+                        contentReady[0] = !view.shelf.isEmpty();
                     } catch (Exception error) { throw new RuntimeException(error); }
                 });
                 if (!contentReady[0]) SystemClock.sleep(20);
             }
             if (!contentReady[0]) throw new AssertionError("Home content did not load");
             long contentMs = SystemClock.elapsedRealtime() - launch;
+            long landscapeMs = -1, landscapeEnd = SystemClock.elapsedRealtime() + 5000;
+            while (SystemClock.elapsedRealtime() < landscapeEnd) {
+                boolean[] ready = {false};
+                runOnMainSync(() -> { try { ready[0] = field(view, "land") != null; } catch (Exception error) { throw new RuntimeException(error); } });
+                if (ready[0]) { landscapeMs = SystemClock.elapsedRealtime() - launch; break; }
+                SystemClock.sleep(20);
+            }
             SystemClock.sleep(8000);
             long[] idleFrames = {0, 0}; runOnMainSync(() -> idleFrames[0] = view.frameCount);
             long cpu = android.os.Process.getElapsedCpuTime();
@@ -57,11 +61,17 @@ public class PerformanceBenchmark extends Instrumentation {
             long idleCpu = android.os.Process.getElapsedCpuTime() - cpu;
             long idleReceived = android.net.TrafficStats.getUidRxBytes(uid) - received, idleSent = android.net.TrafficStats.getUidTxBytes(uid) - sent;
             runOnMainSync(() -> idleFrames[1] = view.frameCount);
+            runOnMainSync(() -> {
+                view.reset(false); long now = SystemClock.uptimeMillis();
+                home.dispatchKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP, 0));
+                home.dispatchKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_UP, 0));
+            });
+            SystemClock.sleep(1000);
             double[] latency = new double[12];
             for (int i = 0; i < latency.length; i++) {
                 CountDownLatch drawn = new CountDownLatch(1); long[] times = new long[2];
                 ViewTreeObserver.OnDrawListener listener = () -> { if (times[1] == 0) { times[1] = SystemClock.elapsedRealtimeNanos(); drawn.countDown(); } };
-                int code = i % 2 == 0 ? KeyEvent.KEYCODE_DPAD_LEFT : KeyEvent.KEYCODE_DPAD_RIGHT;
+                int code = i % 2 == 0 ? KeyEvent.KEYCODE_DPAD_RIGHT : KeyEvent.KEYCODE_DPAD_LEFT;
                 runOnMainSync(() -> {
                     view.getViewTreeObserver().addOnDrawListener(listener);
                     times[0] = SystemClock.elapsedRealtimeNanos(); long now = SystemClock.uptimeMillis();
@@ -74,7 +84,7 @@ public class PerformanceBenchmark extends Instrumentation {
             }
             Arrays.sort(latency); Debug.MemoryInfo memory = new Debug.MemoryInfo(); Debug.getMemoryInfo(memory);
             JSONObject result = new JSONObject().put("label", label).put("activity_open_ms", opened)
-                    .put("apps_and_first_thumbnail_ms", contentMs)
+                    .put("shelf_ready_ms", contentMs).put("landscape_ready_ms", landscapeMs)
                     .put("input_to_draw_median_ms", latency[latency.length / 2]).put("input_to_draw_max_ms", latency[latency.length - 1])
                     .put("idle_cpu_ms_per_10s", idleCpu).put("idle_callbacks_per_10s", idleFrames[1] - idleFrames[0])
                     .put("idle_received_bytes_per_10s", idleReceived).put("idle_sent_bytes_per_10s", idleSent)

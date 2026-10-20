@@ -21,7 +21,10 @@ public class SourcesActivity extends TvActivity {
     private final ExecutorService network = Executors.newFixedThreadPool(6);
     private LinearLayout content, controls;
     private TextView status, heading;
-    private Button play, servicePlay;
+    private Button play, servicePlay, watchlist;
+    private boolean servicePending, linksReady;
+    private int serviceRequest;
+    private int addonCount;
     private static final int PLAYER_REQUEST = 41;
     private String title, kind, imdb, videoId, videoTitle;
     private int titleId, season = 1, generation, remaining, failed, unsupported;
@@ -72,6 +75,15 @@ public class SourcesActivity extends TvActivity {
         servicePlay = page.action("", v -> openService(), 210); servicePlay.setVisibility(View.GONE);
         play = page.action(Ui.tr("Reproduzir com Stremio", "Play with Stremio"), v -> playTitle(), 240); play.setEnabled(false); TvWidgets.primary(play);
         page.action(Ui.tr("Onde assistir", "Where to watch"), v -> providers(), 170);
+        watchlist = page.watchlistButton(v -> {
+            if (imdb == null) return;
+            watchlist.setEnabled(false);
+            network.execute(() -> {
+                boolean saved = !ContinueWatching.inWatchlist(this, imdb);
+                ContinueWatching.setWatchlist(this, imdb, kind, title, backdrop.isEmpty() ? "" : "https://image.tmdb.org/t/p/w780" + backdrop, saved);
+                runOnUiThread(() -> { if (!isDestroyed()) { watchlist.setEnabled(true); TitlePage.setSaved(watchlist, ContinueWatching.inWatchlist(this, imdb)); } });
+            });
+        });
         setContentView(page);
         if (state != null) { season = state.getInt("season", season); focusedEpisode = state.getInt("episode", focusedEpisode); }
         initialize();
@@ -80,9 +92,10 @@ public class SourcesActivity extends TvActivity {
         int request = ++generation;
         network.execute(() -> {
             try {
-                org.json.JSONObject details = TitleSearch.get("/" + kind + "/" + titleId + "?append_to_response=external_ids&language=" + (Ui.en ? "en-US" : "pt-BR"));
+                org.json.JSONObject details = TitleSearch.get("/" + kind + "/" + titleId + "?append_to_response=external_ids,credits,recommendations&language=" + (Ui.en ? "en-US" : "pt-BR"));
                 org.json.JSONObject ids = details.optJSONObject("external_ids");
                 String mapped = ids == null ? details.optString("imdb_id", "") : ids.optString("imdb_id", "");
+                if ("tv".equals(kind)) EpisodeMap.load(mapped);
                 runOnUiThread(() -> {
                     if (!current(request)) return;
                     imdb = mapped.matches("tt[0-9]+") ? mapped : null;
@@ -90,13 +103,22 @@ public class SourcesActivity extends TvActivity {
                     String date = details.optString("tv".equals(kind) ? "first_air_date" : "release_date", "");
                     String year = date.length() >= 4 ? date.substring(0, 4) : "";
                     backdrop = details.optString("backdrop_path", ""); page.backdrop(backdrop);
+                    if ("movie".equals(kind)) page.poster(details.optString("poster_path", ""));
+                    watchlist.setEnabled(imdb != null); TitlePage.setSaved(watchlist, ContinueWatching.inWatchlist(this, imdb));
+                    JSONObject credits = details.optJSONObject("credits"), recommendations = details.optJSONObject("recommendations");
+                    if ("movie".equals(kind)) page.credits(People.credits(credits));
+                    page.cast(People.parse(credits == null ? null : credits.optJSONArray("cast")), person -> startActivity(new Intent(this, PersonActivity.class)
+                            .putExtra("person_id", person.id).putExtra("person_name", person.name)));
+                    page.similar(People.items(recommendations == null ? null : recommendations.optJSONArray("results"), kind), item -> startActivity(new Intent(this, SourcesActivity.class)
+                            .putExtra("title_id", item.id).putExtra("title_kind", item.kind).putExtra("title_name", item.name)));
                     if ("tv".equals(kind)) {
                         org.json.JSONArray typical = details.optJSONArray("episode_run_time");
                         if (typical != null && typical.length() > 0) runtimeMinutes = typical.optInt(0);
                         seasons.clear();
                         List<SeriesEpisodes.Season> available = SeriesEpisodes.seasons(details.optJSONArray("seasons"));
-                        for (SeriesEpisodes.Season item : available) seasons.add(item.number);
-                        season = SeriesEpisodes.initialSeason(available, season);
+                        if (EpisodeMap.available(imdb)) seasons.addAll(EpisodeMap.seasons(imdb));
+                        if (seasons.isEmpty()) for (SeriesEpisodes.Season item : available) seasons.add(item.number);
+                        if (!seasons.contains(season) && !seasons.isEmpty()) season = seasons.get(0);
                         int regular = 0; for (int number : seasons) if (number > 0) regular++;
                         page.metadata.setText(year + "  ·  " + String.format(Ui.tr("%d temporadas", "%d seasons"), regular));
                         loadEpisodes();
@@ -112,7 +134,7 @@ public class SourcesActivity extends TvActivity {
                             WatchOptions.Result result = WatchOptions.catalog(this, selectedTitle);
                             runOnUiThread(() -> { if (!isDestroyed()) { offers.clear(); offers.addAll(result.options); offersLoading = false; updateServices(); } });
                             WatchOptions.resolveLinks(result, selectedTitle);
-                            runOnUiThread(() -> { if (!isDestroyed()) { offers.clear(); offers.addAll(result.options); } });
+                            runOnUiThread(() -> { if (!isDestroyed()) { offers.clear(); offers.addAll(result.options); linksReady = true; if (servicePending) launchService(); } });
                         } catch (Exception ignored) { runOnUiThread(() -> offersLoading = false); }
                     });
                 });
@@ -127,8 +149,10 @@ public class SourcesActivity extends TvActivity {
     private void playTitle() {
         if ("tv".equals(kind)) {
             SeriesEpisodes.Episode selected = null;
-            for (SeriesEpisodes.Episode item : episodeList) if (item.number == focusedEpisode && !item.future) selected = item;
-            if (selected == null) for (SeriesEpisodes.Episode item : episodeList) if (!item.future) { selected = item; break; }
+            java.util.Set<String> watched = ContinueWatching.watched(this, imdb);
+            for (SeriesEpisodes.Episode item : episodeList) if (item.number == focusedEpisode && !item.future && !watched.contains(item.season+":"+item.number)) selected = item;
+            if (selected == null) for (SeriesEpisodes.Episode item : episodeList) if (!item.future && !watched.contains(item.season+":"+item.number)) { selected = item; break; }
+            if (selected == null) for (SeriesEpisodes.Episode item : episodeList) if (item.number == focusedEpisode && !item.future) { selected=item;break; }
             if (selected != null) selectEpisode(selected);
         } else if (imdb != null) loadSources(imdb, title);
     }
@@ -150,6 +174,7 @@ public class SourcesActivity extends TvActivity {
         super.onActivityResult(request, result, data);
         if (request == PLAYER_REQUEST) {
             liveSession = null;
+            if (data != null && data.getBooleanExtra("retry_sources", false)) { loadSources(videoId, videoTitle); return; }
             if ("tv".equals(kind)) {
                 focusEpisodes = true;
                 if (result == RESULT_OK && data != null && data.getBooleanExtra("next_episode", false)) {
@@ -166,6 +191,7 @@ public class SourcesActivity extends TvActivity {
         }
     }
     private void loadEpisodes() {
+        page.deadEnd(null, null, null, null);
         playback.removeCallbacks(beginPlayback); playback.removeCallbacks(sourceDeadline);
         for (java.util.concurrent.Future<?> pending : sourceRequests) pending.cancel(true); sourceRequests.clear();
         liveSession = null; episodes = true; episodeList.clear(); pendingPlay = false; int request = ++generation; sources.clear(); content.removeAllViews();
@@ -173,13 +199,15 @@ public class SourcesActivity extends TvActivity {
         final int requestedSeason = season;
         network.execute(() -> {
             try {
-                JSONArray result = TitleSearch.get("/tv/" + titleId + "/season/" + requestedSeason + "?language=" + (Ui.en ? "en-US" : "pt-BR")).getJSONArray("episodes");
-                List<SeriesEpisodes.Episode> parsed = SeriesEpisodes.episodes(result, requestedSeason, SeriesEpisodes.today());
+                JSONArray result;
+                try { result = TitleSearch.get("/tv/" + titleId + "/season/" + requestedSeason + "?language=" + (Ui.en ? "en-US" : "pt-BR")).getJSONArray("episodes"); }
+                catch (Exception failure) { if (!EpisodeMap.available(imdb)) throw failure; result = new JSONArray(); }
+                List<SeriesEpisodes.Episode> parsed = EpisodeMap.episodes(imdb, requestedSeason, SeriesEpisodes.episodes(result, requestedSeason, SeriesEpisodes.today()), SeriesEpisodes.today());
                 runOnUiThread(() -> {
                     if (!current(request)) return;
                     episodeList.clear(); episodeList.addAll(parsed);
                     status.setText(parsed.isEmpty() ? Ui.tr("Nenhum episódio encontrado.", "No episodes found.") : "");
-                    page.episodes(parsed, imdb, seasons, season, focusedEpisode, focusEpisodes && active, next -> {
+                    page.episodes(parsed, imdb, seasons, season, focusedEpisode, focusEpisodes && active, ContinueWatching.watched(this, imdb), next -> {
                         if (next != season) { season = next; focusedEpisode = 1; focusEpisodes = true; saveSelection(); loadEpisodes(); }
                     }, new TitlePage.Episodes() {
                         public void select(SeriesEpisodes.Episode episode) { selectEpisode(episode); }
@@ -220,6 +248,22 @@ public class SourcesActivity extends TvActivity {
         }
     }
     private void openService() {
+        final int request = ++serviceRequest;
+        if (!linksReady) {
+            servicePending = true; servicePlay.setEnabled(false);
+            status.setText(Ui.tr("Abrindo o título…", "Opening the title…"));
+            playback.postDelayed(() -> { if (servicePending && active && request == serviceRequest) launchService(); }, 6000);
+            return;
+        }
+        launchService();
+    }
+    private void cancelService() {
+        serviceRequest++;
+        if (servicePending) { servicePending = false; servicePlay.setEnabled(true); status.setText(""); }
+    }
+    private void launchService() {
+        servicePending = false; servicePlay.setEnabled(true);
+        if (!active || isFinishing()) return;
         WatchOptions.Option preferred = WatchOptions.preferred(offers);
         if (preferred == null) return;
         Intent intent = WatchOptions.intent(this, preferred);
@@ -244,6 +288,9 @@ public class SourcesActivity extends TvActivity {
                 }).show();
     }
     private void loadSources(String id, String label) {
+        cancelService();
+        page.deadEnd(null, null, null, null);
+        PlaybackMemory.init(this);
         episodes = false; pendingPlay = true; videoId = id; videoTitle = label;
         if (!AddonStore.connected(this)) { status.setText(Ui.tr("Preparando sua conta…", "Preparing your account…")); connect(); return; }
         playback.removeCallbacks(beginPlayback); playback.removeCallbacks(sourceDeadline);
@@ -259,7 +306,7 @@ public class SourcesActivity extends TvActivity {
                 List<AddonStreams.Addon> addons = AddonStreams.addons(StremioAccount.addons(this), "tv".equals(kind) ? "series" : "movie", id);
                 runOnUiThread(() -> {
                     if (!current(request)) return;
-                    remaining = addons.size();
+                    addonCount = addons.size(); remaining = addonCount;
                     if (remaining == 0) { playback.removeCallbacks(sourceDeadline); renderSources(); return; }
                     for (AddonStreams.Addon addon : addons) sourceRequests.add(network.submit(() -> {
                         AddonStreams.Result result = null;
@@ -331,9 +378,23 @@ public class SourcesActivity extends TvActivity {
                 : Ui.tr("Pronto para reproduzir.", "Ready to play.");
         status.setText(message);
         if (remaining + probing == 0) {
-            addButton(content, Ui.tr("Reproduzir", "Play"), v -> loadSources(videoId, videoTitle));
-            if (selected.isEmpty()) pendingPlay = false;
+            if (selected.isEmpty()) {
+                pendingPlay = false;
+                List<String> reasons = new ArrayList<>();
+                if (addonCount == 0) reasons.add(Ui.tr("Nenhum complemento oferece fontes para este título.", "No add-on offers sources for this title."));
+                if (failed > 0) reasons.add(String.format(Ui.tr("%d de %d complementos não responderam.", "%d of %d add-ons did not respond."), failed, addonCount));
+                if (unsupported > 0) reasons.add(String.format(Ui.tr("%d resultados não têm um endereço de vídeo compatível.", "%d results have no supported video address."), unsupported));
+                if (reasons.isEmpty()) reasons.add(Ui.tr("As fontes verificadas não responderam.", "The checked sources did not respond."));
+                List<String> labels = new ArrayList<>(); List<View.OnClickListener> actions = new ArrayList<>();
+                labels.add(Ui.tr("Tentar novamente", "Try again")); actions.add(v -> loadSources(videoId, videoTitle));
+                if (StremioLinks.installed(this) && imdb != null) { labels.add(Ui.tr("Abrir no Stremio", "Open in Stremio")); actions.add(v -> openStremio()); }
+                page.deadEnd(Ui.tr("Não foi possível reproduzir", "Cannot play this title"), reasons, labels.toArray(new String[0]), actions.toArray(new View.OnClickListener[0]));
+            } else addButton(content, Ui.tr("Reproduzir", "Play"), v -> startPlayback(selected.get(0)));
         }
+    }
+    private void openStremio() {
+        try { startActivity(new Intent(Intent.ACTION_VIEW, StremioLinks.videoUri(kind, imdb, videoId)).setPackage(StremioLinks.PACKAGE)); }
+        catch (Exception e) { status.setText(Ui.tr("Não foi possível abrir o Stremio.", "Cannot open Stremio.")); }
     }
     private void startPlayback(AddonStreams.Source first) {
         if (!active) return;
@@ -344,7 +405,7 @@ public class SourcesActivity extends TvActivity {
         if (queue.isEmpty()) return;
         pendingPlay = false; playback.removeCallbacks(beginPlayback);
         PlaybackSession.current = new PlaybackSession(videoId, videoTitle, queue, -1);
-        liveSession = PlaybackSession.current; liveSession.discovering = remaining > 0 || probing > 0;
+        liveSession = PlaybackSession.current; liveSession.updateSources(sources, remaining > 0 || probing > 0); liveSession.discovering = remaining > 0 || probing > 0;
         ContinueWatching.Entry entry = new ContinueWatching.Entry();
         entry.id = "local:" + videoId; entry.video = videoId; entry.imdb = imdb; entry.tmdb = titleId;
         entry.title = title; entry.kind = kind; entry.provider = "Stremio"; entry.art = backdrop.isEmpty() ? "" : "https://image.tmdb.org/t/p/w780" + backdrop;
@@ -375,13 +436,14 @@ public class SourcesActivity extends TvActivity {
     }
     @Override protected void onResume() {
         super.onResume(); page.resumeArtwork(); active = true; tryAutoResume();
+        if (watchlist != null) TitlePage.setSaved(watchlist, ContinueWatching.inWatchlist(this, imdb));
         if (pendingPlay && !authorizing) {
             if (!AddonStore.connected(this)) connect();
             else if (!episodes && !sources.isEmpty()) renderSources();
         }
     }
     @Override protected void onStop() { page.pauseArtwork(); super.onStop(); }
-    @Override protected void onPause() { active = false; playback.removeCallbacks(beginPlayback); super.onPause(); }
+    @Override protected void onPause() { active = false; cancelService(); playback.removeCallbacks(beginPlayback); super.onPause(); }
     @Override protected void onDestroy() {
         generation++; playback.removeCallbacksAndMessages(null); network.shutdownNow(); probes.shutdownNow(); page.release();
         if (liveSession != null && liveSession.discovering) { liveSession.discovering = false; if (liveSession.sourcesChanged != null) liveSession.sourcesChanged.run(); }

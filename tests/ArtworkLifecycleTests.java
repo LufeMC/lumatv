@@ -13,7 +13,7 @@ import java.lang.reflect.Field;
 import java.util.Collections;
 
 /** Verify artwork release and restoration across search, title, and playback screens. */
-public class ArtworkLifecycleTests extends Instrumentation {
+public class ArtworkLifecycleTests extends TvTest {
     private SearchActivity search;
     private SourcesActivity title;
     private PlayerActivity player;
@@ -33,6 +33,7 @@ public class ArtworkLifecycleTests extends Instrumentation {
         throw new AssertionError(label);
     }
     private int images(View view) {
+        if (view instanceof ArtTile) return ((ArtTile) view).image() == null ? 0 : 1;
         if (view instanceof ImageView) return ((ImageView) view).getDrawable() == null ? 0 : 1;
         int count = 0; if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) count += images(((ViewGroup) view).getChildAt(i));
         return count;

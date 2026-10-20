@@ -48,13 +48,13 @@ final class PlaybackPlan {
 
     // Memory for rewinding shares the player's 20 MB limit with the video loaded ahead. Keep it to a quarter.
     static final int TARGET_BUFFER_BYTES = 20 * 1024 * 1024;
-    static final int BACK_BUFFER_MS = 15000, MIN_BACK_BUFFER_MS = 1000;
+    static final int BACK_BUFFER_MS = 15000;
 
     /** Back buffer for a source of this bitrate (bits per second): at most 15 s, and at most a quarter of the limit. */
     static int backBufferMs(long bitsPerSecond) {
         if (bitsPerSecond <= 0) return BACK_BUFFER_MS;
         long ms = (TARGET_BUFFER_BYTES / 4L) * 8L * 1000L / bitsPerSecond;
-        return (int) Math.max(MIN_BACK_BUFFER_MS, Math.min(BACK_BUFFER_MS, ms));
+        return (int) Math.min(BACK_BUFFER_MS, ms);
     }
 
     /** The source's bitrate from its size and the expected runtime, else a cautious guess from its resolution. */

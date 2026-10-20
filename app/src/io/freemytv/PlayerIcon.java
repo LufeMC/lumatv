@@ -58,7 +58,7 @@ final class PlayerIcon extends View {
     @Override protected void drawableStateChanged() { super.drawableStateChanged(); invalidate(); }
 
     @Override protected void onDraw(Canvas canvas) {
-        boolean focus = isFocused() || isPressed() || (!circle && (isActivated() || hasParentFocus()));
+        boolean focus = isFocused() || isPressed() || (!circle && hasParentFocus());
         int color = focus ? focused : rest;
         float size = Math.min(getWidth(), getHeight());
         // Glyphs are drawn in a 24-unit box; a round button shows them at about 40% of its size.
@@ -76,6 +76,10 @@ final class PlayerIcon extends View {
             paint.setStrokeWidth(Math.max(1.5f, 1.7f * u));
         }
         switch (symbol) {
+            case "search":
+                canvas.drawCircle(x0 + 10.5f * u, y0 + 10.5f * u, 7 * u, paint);
+                canvas.drawLine(x0 + 16 * u, y0 + 16 * u, x0 + 21 * u, y0 + 21 * u, paint);
+                break;
             case "pause":
                 paint.setStyle(Paint.Style.FILL);
                 oval.set(x0 + 6 * u, y0 + 4.5f * u, x0 + 10 * u, y0 + 19.5f * u); canvas.drawRoundRect(oval, 1.2f * u, 1.2f * u, paint);

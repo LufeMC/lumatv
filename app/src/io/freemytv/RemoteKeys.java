@@ -294,8 +294,9 @@ public class RemoteKeys extends AccessibilityService {
     static String restoreServices(String saved, String current, String component) {
         String now = withoutService(current, component);
         String before = withoutService(saved, component);
-        if (now.equals(before)) return unset(saved) ? null : saved.trim();
-        return now.isEmpty() ? null : now;
+        if (!now.equals(before)) return now.isEmpty() ? null : now;
+        if (unset(saved) || before.isEmpty()) return null;
+        return contains(saved, component) ? before : saved.trim();   // never put ours back
     }
 
     /** accessibility_enabled to put back: the saved value (null = delete) when no other service remains, else "1". */

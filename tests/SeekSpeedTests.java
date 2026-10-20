@@ -11,7 +11,7 @@ import androidx.media3.exoplayer.ExoPlayer;
 import org.json.JSONObject;
 
 /** Measure first and cached seek previews with the same generated fixture. */
-public class SeekSpeedTests extends Instrumentation {
+public class SeekSpeedTests extends TvTest {
     private PlayerActivity activity;
     private SourcesActivity anchor;
     private String phase = "after", step = "startup";
@@ -50,7 +50,7 @@ public class SeekSpeedTests extends Instrumentation {
             PlaybackSession.current = new PlaybackSession("tt0000008", "Seek preview test", Collections.singletonList(source), 360);
             activity = (PlayerActivity) startActivitySync(new Intent(getTargetContext(), PlayerActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             await(() -> player() != null && (Boolean) value("sourceValidated"));
-            runOnMainSync(() -> { try { player().seekTo(30000); ((android.view.View) value("pause")).requestFocus(); } catch (Exception e) { throw new RuntimeException(e); } });
+            runOnMainSync(() -> { try { player().seekTo(30000); ((android.view.View) value("seek")).requestFocus(); } catch (Exception e) { throw new RuntimeException(e); } });
             await(() -> player().getCurrentPosition() >= 30000 && player().isPlaying());
             step = "first preview";
             long first = SystemClock.elapsedRealtime(); key(KeyEvent.KEYCODE_DPAD_RIGHT);
@@ -72,7 +72,7 @@ public class SeekSpeedTests extends Instrumentation {
                 runOnMainSync(() -> { try { if (!scrub().active) throw new AssertionError("Repeated arrow did not restart the timer"); } catch (Exception e) { throw new RuntimeException(e); } });
                 step = "automatic confirmation";
                 await(() -> !scrub().active && player().isPlaying() && player().getCurrentPosition() >= target[0] - 2000);
-                runOnMainSync(() -> { try { ((android.view.View) value("pause")).requestFocus(); } catch (Exception e) { throw new RuntimeException(e); } });
+                runOnMainSync(() -> { try { ((android.view.View) value("seek")).requestFocus(); } catch (Exception e) { throw new RuntimeException(e); } });
                 key(KeyEvent.KEYCODE_DPAD_LEFT); await(() -> scrub().active); key(KeyEvent.KEYCODE_BACK);
                 step = "automatic confirmation";
                 await(() -> !scrub().active && player().isPlaying());

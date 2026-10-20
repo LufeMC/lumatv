@@ -52,6 +52,7 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
+        android:name=".LumaApp"
         android:label="LumaTV"
         android:icon="@drawable/icon"
         android:banner="@drawable/banner"
@@ -89,6 +90,9 @@
             android:exported="false"
             android:screenOrientation="landscape"
             android:theme="@style/FreeMyTV.Home" />
+
+        <activity android:name=".PersonActivity" android:process=":home" android:exported="false"
+            android:screenOrientation="landscape" android:theme="@style/FreeMyTV.Home" />
 
         <activity
             android:name=".AppsActivity"

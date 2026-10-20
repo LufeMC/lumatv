@@ -29,7 +29,7 @@ final class Landscape {
 
     /** Which one fits now: the Look setting first, then the sun (dusk = an hour either side of sunrise and sunset). */
     static int now(Context c, HomeData.Weather wx, long now) {
-        String look = Prefs.get(c, Prefs.HOME_UI).getString(Prefs.LOOK, "sunset");
+        String look = Prefs.look(c);
         if ("day".equals(look)) return DAY;
         if ("night".equals(look)) return NIGHT;
         long rise = wx.sunrise, set = wx.sunset;

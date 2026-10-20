@@ -11,7 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Exercise player recovery with denied, missing, and damaged test media. */
-public class PlayerFailureTests extends Instrumentation {
+public class PlayerFailureTests extends TvTest {
     private PlayerActivity activity;
     private SourcesActivity anchor;
     private int checks;

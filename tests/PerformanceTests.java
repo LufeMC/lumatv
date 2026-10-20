@@ -9,7 +9,7 @@ import android.view.KeyEvent;
 import java.lang.reflect.Field;
 
 /** Measure idle callbacks and check that navigation wakes the renderer. */
-public class PerformanceTests extends Instrumentation {
+public class PerformanceTests extends TvTest {
     private int checks;
     private Activity home;
     @Override public void onCreate(Bundle args) {
@@ -32,8 +32,9 @@ public class PerformanceTests extends Instrumentation {
             long[] first = {0}, last = {0}; runOnMainSync(() -> first[0] = view.frameCount);
             SystemClock.sleep(4000); runOnMainSync(() -> last[0] = view.frameCount);
             long callbacks = last[0] - first[0]; check(callbacks <= 12, "idle rendering does not run continuously");
-            long before = last[0]; key(KeyEvent.KEYCODE_DPAD_LEFT); SystemClock.sleep(450);
-            runOnMainSync(() -> last[0] = view.frameCount); check(last[0] > before + 2, "remote input wakes animation frames");
+            long before = last[0]; key(KeyEvent.KEYCODE_DPAD_UP); SystemClock.sleep(450);
+            runOnMainSync(() -> last[0] = view.frameCount);
+            check(view.zone == HomeView.Z_ICONS && last[0] > before, "remote input changes focus and draws the new state");
             SystemClock.sleep(2000); runOnMainSync(() -> first[0] = view.frameCount); SystemClock.sleep(3000); runOnMainSync(() -> last[0] = view.frameCount);
             check(last[0] - first[0] <= 10, "renderer returns to idle after navigation");
             output.putString("stream", "Passed " + checks + " performance checks. Idle callbacks in four seconds: " + callbacks + ".\n");

@@ -17,10 +17,10 @@ final class SeriesEpisodes {
     }
     static final class Episode {
         int season, number, minutes;
-        String name, overview, date, still;
+        String name, overview, date, still, sourceId;
         boolean future;
         String code() { return "S" + season + " E" + number; }
-        String id(String imdb) { return imdb + ":" + season + ":" + number; }
+        String id(String imdb) { return sourceId != null ? sourceId : EpisodeMap.id(imdb, this); }
     }
     static List<Season> seasons(JSONArray input) {
         List<Season> result = new ArrayList<>(); Set<Integer> seen = new HashSet<>();

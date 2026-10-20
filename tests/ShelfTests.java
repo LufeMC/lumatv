@@ -11,7 +11,7 @@ import java.util.Collections;
 import java.util.List;
 
 /** Run against an isolated preference file on an Android TV. */
-public class ShelfTests extends Instrumentation {
+public class ShelfTests extends TvTest {
     private int checks;
     private void check(boolean value, String name) {
         if (!value) throw new AssertionError(name);
