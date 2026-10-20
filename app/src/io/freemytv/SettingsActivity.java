@@ -708,7 +708,8 @@ public class SettingsActivity extends TvActivity {
                 para(body, Ui.tr("Até 8 apps, na ordem que você quiser.", "Up to 8 apps, in the order you like."));
                 spacer(body, 32);
                 edit = row(body, Ui.tr("Editar apps", "Edit apps"), "", true,
-                        () -> startActivity(new Intent(SettingsActivity.this, AppsActivity.class)));
+                        () -> startActivity(new Intent(SettingsActivity.this, HomeActivity.class)
+                                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP).putExtra(HomeActivity.EDIT_APPS, true)));
             }
 
             @Override void shown() {

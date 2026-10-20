@@ -20,6 +20,7 @@ public class HomeActivity extends Activity {
     }
     @Override public java.io.File getFilesDir() { return getApplicationContext().getFilesDir(); }
     static final int VOICE = 20;
+    static final String EDIT_APPS = "io.freemytv.extra.EDIT_APPS";
     static java.lang.ref.WeakReference<HomeActivity> visible = new java.lang.ref.WeakReference<>(null);
     private HomeView home;
     long fontsMs, viewMs;
@@ -45,6 +46,7 @@ public class HomeActivity extends Activity {
         setContentView(home);
         getWindow().setBackgroundDrawable(null);
         if (RemoteKeys.TARGET_INPUTS.equals(getIntent().getStringExtra(RemoteKeys.EXTRA_OPEN))) home.openRemoteInputs();
+        if (getIntent().getBooleanExtra(EDIT_APPS, false)) home.openAppEditor();
         if (getIntent().getBooleanExtra("play_opening", false)) home.playOpening();
     }
 
@@ -70,6 +72,7 @@ public class HomeActivity extends Activity {
         setIntent(intent);
         if (home != null) home.reset(true);
         if (home != null && RemoteKeys.TARGET_INPUTS.equals(intent.getStringExtra(RemoteKeys.EXTRA_OPEN))) home.openRemoteInputs();
+        if (home != null && intent.getBooleanExtra(EDIT_APPS, false)) home.openAppEditor();
         if (home != null && intent.getBooleanExtra("play_opening", false)) home.playOpening();
     }
 

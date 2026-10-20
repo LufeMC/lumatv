@@ -152,7 +152,7 @@ Useful suites include these groups.
 
 | Area | Suites |
 | --- | --- |
-| Home and design | `HomeControlsTests`, `ContinueUiTests`, `DesignReviewTests` |
+| Home and design | `HomeControlsTests`, `ContinueUiTests`, `DesignReviewTests`, `DesignStatesTests`, `FocusRecoveryTests` |
 | Discovery | `SearchAccessTests`, `DiscoveryUiTests`, `DiscoveryDataTests`, `EpisodeDataTests` |
 | Playback | `PlayerTests`, `PlayerFlowTests`, `EpisodeFlowTests`, `PlayerFailureTests` |
 | Sources | `StreamDataTests`, `SourceFailureTests` |
@@ -209,3 +209,23 @@ Its default mode does not publish a release.
 Publishing requires a separate authorized `--publish` action.
 The TV updater verifies the package, version, hash, and signing certificate before installation.
 Do not publish a release until the remaining checks in [VERIFICATION.md](VERIFICATION.md) are complete.
+
+## Extended acceptance checks
+
+`LiveBingeTests` uses the authorized account to verify a real next-episode transition.
+Use a 420-second runner timeout for that suite.
+`SubtitlePipelineTests` uses the deterministic media from `tools/make-subtitle-fixture.py`.
+It verifies correction through decoded audio and preserves the system volume setting.
+`SyncTransportTests` uses an isolated peer and the actual HTTP server.
+It does not activate a second physical TV.
+`PortugueseLayoutTests` checks the series and player controls without changing the household language.
+
+`HighBitratePlaybackTests` requires a generated 1080p, 24-fps AVC file at 55 Mbps.
+Place it in the application external-files directory as `high-bitrate-1080.mkv` before the test.
+Remove that generated file after testing.
+The current G3 lacks 4K AVC and HEVC support.
+This suite verifies automatic exclusion of those source types and playback of the supported alternative.
+
+Use `tools/review-phone-design.cjs` with Playwright for the phone layout checks.
+The script uses representative responses and does not contact an account service.
+Pass an output directory as its first argument.

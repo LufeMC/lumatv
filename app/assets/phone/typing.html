@@ -22,6 +22,7 @@ header{height:24px;display:flex;align-items:center;justify-content:space-between
 .field svg{flex:none;opacity:.7}
 input{flex:1;min-width:0;height:100%;background:none;border:0;outline:0;margin:0;padding:0;color:var(--ink);caret-color:var(--ink);font:600 30px/38px system-ui,-apple-system,sans-serif;letter-spacing:-.02em;-webkit-appearance:none;appearance:none}
 input::placeholder{color:rgba(245,243,239,.5)}
+input::-webkit-search-cancel-button,input::-webkit-search-decoration{-webkit-appearance:none;display:none}
 .clear{flex:none;width:44px;height:44px;border-radius:22px;background:rgba(255,255,255,.12);display:none;align-items:center;justify-content:center;color:rgba(245,243,239,.8)}
 .has .clear{display:flex}
 h2{margin:24px 0 0;font-size:15px;line-height:20px;font-weight:500;color:var(--ink3)}
@@ -29,6 +30,7 @@ ul{margin:8px 0 0;padding:0;list-style:none}
 li button{width:100%;min-height:74px;display:flex;align-items:center;gap:16px;padding:4px 0}
 li button:active{opacity:.6}
 .poster{flex:0 0 44px;width:44px;height:66px;border-radius:8px;object-fit:cover;display:block;background:#1A1B1F}
+.poster.fallback{display:flex;align-items:center;justify-content:center;font-size:22px;color:rgba(245,243,239,.45)}
 .text{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .title{font-size:17px;line-height:22px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .meta{font-size:15px;line-height:20px;color:var(--ink3)}
@@ -93,9 +95,12 @@ li button:active{opacity:.6}
       var li = document.createElement('li'), b = document.createElement('button');
       b.type = 'button';
       b.setAttribute('aria-label', T('Abrir ', 'Open ') + r.title + T(' na TV', ' on the TV'));
-      var img = document.createElement('img');
-      img.className = 'poster'; img.alt = ''; img.loading = 'lazy';
-      if (r.poster && r.poster.indexOf('https://image.tmdb.org/') === 0) img.src = r.poster;
+      var hasPoster = r.poster && r.poster.indexOf('https://image.tmdb.org/') === 0;
+      var img = document.createElement(hasPoster ? 'img' : 'span');
+      img.className = hasPoster ? 'poster' : 'poster fallback';
+      img.setAttribute('aria-hidden', 'true');
+      if (hasPoster) { img.alt = ''; img.loading = 'lazy'; img.src = r.poster; }
+      else img.textContent = (r.title || '').slice(0, 1).toUpperCase();
       var t = document.createElement('span'); t.className = 'text';
       var a = document.createElement('span'); a.className = 'title'; a.textContent = r.title;
       var m = document.createElement('span'); m.className = 'meta';

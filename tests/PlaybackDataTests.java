@@ -52,6 +52,9 @@ public class PlaybackDataTests extends TvTest {
             check(CodecSupport.AV1.equals(CodecSupport.unsupported("Movie 1080p AV1", 1080, plain)), "AV1 without a decoder");
             check(CodecSupport.HEVC_10.equals(CodecSupport.unsupported("Movie 1080p x265 10bit", 1080, plain)), "10-bit HEVC without Main10");
             check(CodecSupport.unsupported("Movie 1080p x264 DVDRip", 1080, plain) == null, "H.264 plays; DVDRip is not DV");
+            check(CodecSupport.AVC.equals(CodecSupport.unsupported("Movie 2160p x264", 2160, plain)), "4K AVC needs a matching decoder");
+            plain.avc4k = true;
+            check(CodecSupport.unsupported("Movie 2160p x264", 2160, plain) == null, "a supported 4K AVC source remains eligible");
             CodecSupport.Device rich = new CodecSupport.Device(); rich.hevc = rich.hevcMain10 = rich.hevc4k = rich.av1 = true;
             check(CodecSupport.unsupported("Movie 2160p DV HDR10 HEVC", 2160, rich) == null, "DV profile 8 falls back to HDR10");
             check(CodecSupport.AV1.equals(CodecSupport.unsupported("Movie 2160p AV1", 2160, rich)), "4K AV1 needs a hardware decoder");
@@ -89,6 +92,10 @@ public class PlaybackDataTests extends TvTest {
                 check(PlaybackPlan.backBufferMs(rate) * rate / 8000 <= PlaybackPlan.TARGET_BUFFER_BYTES / 4, "quarter of the limit at " + rate);
             AddonStreams.Source sized = source("sized", 2160, "A"); sized.videoSize = 15_000_000_000L;
             check(PlaybackPlan.estimateBitrate(sized, 2 * 3600_000L) == 16_666_666L, "bitrate from size and runtime");
+            sized.videoSize = 275_000_000L;
+            check(PlaybackPlan.estimateBitrate(sized, 40000) == 55_000_000L, "short known clips use their actual bitrate");
+            sized.videoSize = Long.MAX_VALUE;
+            check(PlaybackPlan.estimateBitrate(sized, 1) == Long.MAX_VALUE, "an excessive size cannot overflow into a low bitrate");
             check(MediaCache.limit(10L << 30) == MediaCache.LARGE && MediaCache.limit(1L << 30) == MediaCache.SMALL, "disk cache size");
 
             // Subtitle files.

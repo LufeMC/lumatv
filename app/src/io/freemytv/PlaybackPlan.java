@@ -59,7 +59,8 @@ final class PlaybackPlan {
 
     /** The source's bitrate from its size and the expected runtime, else a cautious guess from its resolution. */
     static long estimateBitrate(AddonStreams.Source source, long expectedDurationMs) {
-        if (source != null && source.videoSize > 0 && expectedDurationMs >= 60000) return source.videoSize * 8L * 1000L / expectedDurationMs;
+        if (source != null && source.videoSize > 0 && expectedDurationMs > 0)
+            return Math.max(1L, (long) (source.videoSize * (8000.0 / expectedDurationMs)));
         int quality = source == null ? 0 : source.quality;
         return quality >= 2160 ? 25_000_000L : quality >= 1080 ? 10_000_000L : quality >= 720 ? 5_000_000L : 8_000_000L;
     }

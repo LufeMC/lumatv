@@ -17,7 +17,7 @@ final class CodecSupport {
 
     /** The decoders this device has; tests can replace it. */
     static final class Device {
-        boolean dolbyVision, av1, av1Hardware, hevc, hevcMain10, hevc4k;
+        boolean dolbyVision, av1, av1Hardware, hevc, hevcMain10, hevc4k, avc4k;
     }
 
     private static volatile Device device;
@@ -33,6 +33,12 @@ final class CodecSupport {
                     String mime = type.toLowerCase(Locale.ROOT);
                     if (mime.equals("video/dolby-vision")) d.dolbyVision = true;
                     if (mime.equals("video/av01")) { d.av1 = true; if (info.isHardwareAccelerated()) d.av1Hardware = true; }
+                    if (mime.equals("video/avc")) {
+                        try {
+                            MediaCodecInfo.VideoCapabilities video = info.getCapabilitiesForType(type).getVideoCapabilities();
+                            if (video != null && video.isSizeSupported(3840, 2160)) d.avc4k = true;
+                        } catch (Exception ignored) {}
+                    }
                     if (mime.equals("video/hevc")) {
                         d.hevc = true;
                         try {
@@ -47,7 +53,7 @@ final class CodecSupport {
                 }
             }
         } catch (Exception ignored) {
-            d.hevc = d.hevcMain10 = d.hevc4k = d.dolbyVision = d.av1 = d.av1Hardware = true; // unknown device: don't reject anything
+            d.hevc = d.hevcMain10 = d.hevc4k = d.avc4k = d.dolbyVision = d.av1 = d.av1Hardware = true; // unknown device: don't reject anything
         }
         device = d;
         return d;
@@ -85,6 +91,7 @@ final class CodecSupport {
         }
         if (AV1_TAG.matcher(t).find() && (!d.av1 || !d.av1Hardware && quality > 1080)) return AV1;
         boolean hevc = HEVC_TAG.matcher(t).find();
+        if (AVC_TAG.matcher(t).find() && quality >= 2160 && !d.avc4k) return AVC;
         if (hevc && !d.hevc) return HEVC;
         if ((hevc || quality >= 2160) && (tenBit || hdr) && !d.hevcMain10) return HEVC_10;
         if (hevc && quality >= 2160 && !d.hevc4k) return HEVC;

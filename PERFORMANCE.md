@@ -217,3 +217,20 @@ The later Home PSS sample was 53,731 KiB.
 These measurements used the same G3 as the earlier 696-millisecond optimized baseline.
 The small sample shows no startup regression under these conditions.
 It does not establish a performance guarantee for all TVs.
+
+## High-bitrate and episode-transition checks
+
+The completion pass played generated 1080p AVC at approximately 55.1 Mbps.
+The twenty-second sample recorded zero dropped video frames and advancing decoded audio.
+The calculated backward buffer was 760 milliseconds.
+The G3 reported no 4K AVC or HEVC decoder.
+The automatic queue excluded both unsupported 4K source types.
+Its display offered no matching 24-fps mode, so the player retained 60 Hz.
+These hardware limits do not establish the limits of other TV models.
+
+A real episode-transition test prepared one MiB of the next source in approximately 19.2 seconds.
+The current episode continued during preparation.
+The countdown started the exact next episode automatically.
+The next episode sustained video and advancing decoded audio for twenty seconds.
+The test used accelerated playback near the first episode's end.
+It did not change the household's saved progress.

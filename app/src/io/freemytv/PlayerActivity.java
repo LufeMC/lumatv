@@ -465,7 +465,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         player = new ExoPlayer.Builder(this, new PlaybackAudio(this, sync)).setReleaseTimeoutMs(2000)
                 .setMediaSourceFactory(new DefaultMediaSourceFactory(data).setLoadErrorHandlingPolicy(new androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(0)))
                 .setLoadControl(new androidx.media3.exoplayer.DefaultLoadControl.Builder().setBufferDurationsMs(15000, 45000, 1000, 1500)
-                        .setTargetBufferBytes(PlaybackPlan.TARGET_BUFFER_BYTES).setPrioritizeTimeOverSizeThresholds(false).setBackBuffer(backBuffer, true).build()).build();
+                        .setTargetBufferBytes(PlaybackPlan.TARGET_BUFFER_BYTES).setPrioritizeTimeOverSizeThresholds(false).setBackBuffer(backBuffer, false).build()).build();
         player.setAudioAttributes(new AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true);
         player.setHandleAudioBecomingNoisy(true); player.setVideoSurfaceView(surface);
         TrackSelectionParameters.Builder parameters = player.getTrackSelectionParameters().buildUpon()
@@ -715,7 +715,8 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         if (!nextLoaded) { main.postDelayed(() -> { if (started && (playbackEnded || creditsHandled) && !upNextShown) startUpNext(atEnd); }, 500); return; }
         if (nextEpisode == null) { if (atEnd) showControls(); return; }
         boolean autoplay = Prefs.flag(this, Prefs.PLAYBACK, Prefs.AUTOPLAY, true) && !autoNextCancelled;
-        int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        int hour = TestState.active && TestState.playbackHour >= 0 ? TestState.playbackHour
+                : java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
         if (autoplay && PlaybackMemory.stillWatchingDue(PlaybackMemory.autoplayChain(this), hour, Prefs.flag(this, Prefs.PLAYBACK, Prefs.STILL_WATCHING, true))) {
             showStillWatching(); return;
         }
@@ -767,7 +768,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         stillShown = true; stillPaused = false; stillUntil = SystemClock.elapsedRealtime() + 60000;
         hideControls(); introActions.setVisibility(View.GONE);
         stillWatching.header.set(showTitle, nextEpisode == null ? "" : Ui.tr("A seguir · ", "Up next · ") + nextEpisode.code() + " · " + nextEpisode.name);
-        stillWatching.line.setText(String.format(Ui.tr("Você assistiu %d episódios seguidos.", "You’ve watched %d episodes in a row."), PlaybackMemory.autoplayChain(this)));
+        stillWatching.line.setText(String.format(Ui.tr("Você assistiu %d episódios seguidos.", "You watched %d consecutive episodes."), PlaybackMemory.autoplayChain(this)));
         stillWatching.setVisibility(View.VISIBLE); stillWatching.keep.requestFocus();
         updateStillWatching(SystemClock.elapsedRealtime());
     }

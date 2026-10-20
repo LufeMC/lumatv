@@ -35,13 +35,17 @@ public class PhoneLinkTests extends TvTest {
             check(request(uri,"GET",uri.getRawPath()+"?"+uri.getRawQuery(),"","other.invalid","").startsWith("HTTP/1.1 403"),"unexpected Host is rejected");
             check(request(uri,"GET","/api/setup",token,host,"").startsWith("HTTP/1.1 403"),"typing token cannot access setup");
             AtomicReference<String> typed=new AtomicReference<>();
-            PhoneLink.setTypingListener(new PhoneLink.Listener(){public void onText(String value){typed.set(value);}public void onOpen(String id){}});
+            java.util.concurrent.atomic.AtomicBoolean setupChanged=new java.util.concurrent.atomic.AtomicBoolean();
+            PhoneLink.setTypingListener(new PhoneLink.Listener(){public void onText(String value){typed.set(value);}public void onOpen(String id){}public void onSetup(){setupChanged.set(true);}});
             check(request(uri,"POST","/api/type",token,host,"{\"text\":\"\"}").startsWith("HTTP/1.1 200"),"authorized typing is accepted");
             long end=SystemClock.elapsedRealtime()+2000;while(typed.get()==null&&SystemClock.elapsedRealtime()<end)SystemClock.sleep(20);
             check("".equals(typed.get()),"phone input reaches the TV listener");
             URI setup=new URI(PhoneLink.setupUrl(getTargetContext()));String setupKey=setup.getQuery().substring(2);
             String view=request(setup,"GET","/api/setup",setupKey,host,"");
             check(view.startsWith("HTTP/1.1 200")&&view.contains("hasKey")&&!view.contains(Setup.tmdbKey()),"setup response does not return the TMDB key");
+            check(request(setup,"POST","/api/setup",setupKey,host,"{\"unit\":\"C\"}").startsWith("HTTP/1.1 200"),"authorized setup updates are accepted");
+            end=SystemClock.elapsedRealtime()+2000;while(!setupChanged.get()&&SystemClock.elapsedRealtime()<end)SystemClock.sleep(20);
+            check(setupChanged.get(),"phone setup notifies the active screen");
             result.putString("stream","Passed "+checks+" phone link checks.\n");
         }catch(Throwable e){result.putString("stream","FAILED after "+checks+": "+e.getClass().getSimpleName()+"\n");}
         finally{PhoneLink.setTypingListener(null);PhoneLink.stop();finish(result.getString("stream","").startsWith("Passed")?-1:0,result);}

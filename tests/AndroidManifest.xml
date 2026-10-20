@@ -4,6 +4,13 @@
       <provider android:name="io.freemytv.TestMediaProvider" android:authorities="io.freemytv.tests.media" android:exported="true" />
     </application>
     <instrumentation android:name="io.freemytv.UpdateIntegrationTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+    <instrumentation android:name="io.freemytv.SubtitlePipelineTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.DesignStatesTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.LiveBingeTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.HighBitratePlaybackTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.SyncTransportTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+    <instrumentation android:name="io.freemytv.PortugueseLayoutTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.FocusRecoveryTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.HouseholdState" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
     <instrumentation android:name="io.freemytv.DesignReviewTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.HomeControlsTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />

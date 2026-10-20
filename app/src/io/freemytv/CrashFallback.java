@@ -64,7 +64,7 @@ final class CrashFallback {
         words.addView(note, Kit.top(a, Kit.fill(), 24));
 
         View gap = new View(a);
-        content.addView(gap, Kit.weight());
+        content.addView(gap, new LinearLayout.LayoutParams(0, 1, 1));
         LinearLayout buttons = Kit.row(a, LinearLayout.VERTICAL);
         content.addView(buttons, new LinearLayout.LayoutParams(Kit.px(a, 600), LinearLayout.LayoutParams.WRAP_CONTENT));
         TextView again = action(a, t, Ui.tr("Tentar a LumaTV de novo", "Try LumaTV again"), v -> {
@@ -87,13 +87,13 @@ final class CrashFallback {
                 boolean known = revert != null && revert.optLong("at") >= since;
                 if (known && revert.optBoolean("ok")) {
                     line.setText(Ui.tr("Para a TV continuar fácil de usar, ela voltou ao Início original por enquanto.",
-                            "To keep your TV usable, it switched back to the original home screen for now."));
+                            "The original home screen is active. Select an action to continue."));
                 } else if (known) {
                     line.setText(Ui.tr("Não deu para voltar ao Início original sozinha. Escolha o que fazer.",
-                            "It couldn't switch back to the original home screen by itself. Choose what to do."));
+                            "The original home screen could not start. Select an action to continue."));
                 } else {
                     line.setText(Ui.tr("Para a TV continuar fácil de usar, ela está voltando ao Início original.",
-                            "To keep your TV usable, it's switching back to the original home screen."));
+                            "LumaTV is restoring the original home screen."));
                 }
                 if (root.isAttachedToWindow() || !known) handler.postDelayed(this, 1000);
             }

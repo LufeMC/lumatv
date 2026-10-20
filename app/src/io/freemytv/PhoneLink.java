@@ -54,6 +54,7 @@ final class PhoneLink {
         void onText(String text);
         /** `id` is "movie:<tmdb id>" or "tv:<tmdb id>"; {@link #result} gives the title. */
         void onOpen(String id);
+        default void onSetup() {}
     }
 
     static final int PREFERRED_PORT = 48613;
@@ -485,6 +486,7 @@ final class PhoneLink {
         if (unit.equals("C") || unit.equals("F")) fields.put("temperature", unit);
         if (fields.length() == 0) return Response.json(200, error("empty"));
         if (!Setup.save(app, fields)) return Response.json(200, error("not_saved"));
+        MAIN.post(() -> { Listener now = listener; if (now != null) now.onSetup(); });
         HomeMode.notice(app, Ui.tr("Configuração recebida do telefone.", "Setup received from your phone."));
         return Response.json(200, setupView().put("ok", true));
     }

@@ -6,6 +6,7 @@ import java.util.*;
 /** Only signed instrumentation enables this process-local state. */
 final class TestState {
     static volatile boolean active;
+    static int playbackHour = -1;
     static final String PREFIX = "instrumentation-";
     static final Set<String> copied = new HashSet<>();
     static boolean filesReady;

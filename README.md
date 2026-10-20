@@ -5,7 +5,8 @@ It is based on [Free My TV](https://github.com/simbasjungles/free-my-tv).
 The Android package remains `io.freemytv`, so updates preserve existing application data.
 
 The approved redesign and 55 improvements are listed in [ROADMAP.md](ROADMAP.md).
-Implementation and device verification are in progress.
+The approved feature groups are implemented.
+Device verification and remaining external actions are recorded below.
 See [VERIFICATION.md](VERIFICATION.md) for the evidence and incomplete physical checks.
 
 ## Features

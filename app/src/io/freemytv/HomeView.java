@@ -70,6 +70,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final PhoneLink.Listener phoneListener = new PhoneLink.Listener() {
         public void onText(String text) { if (running) voiceResult(text); }
         public void onOpen(String id) { TitleSearch.Title t = PhoneLink.result(id); if (running && t != null) openTitle(t.id, t.kind, t.name, ""); }
+        public void onSetup() {
+            if (!running) return;
+            reset(true);
+            refreshPhoneCodes();
+            data.refreshIfStale();
+            recs.refreshIfStale();
+        }
     };
     private static final int REST = 0, CONTENT = 1, SEARCH = 2;
     static final int Z_ICONS = 0, Z_PILL = 1, Z_CHIP = 2, Z_LOGOS = 3, Z_HERO = 4, Z_ROW = 5, Z_KEYS = 6, Z_RESULTS = 7,
@@ -258,7 +265,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Paint editP, menuItemP, menuItemOnP, bigTitleP, bigSubP, setupTitleP, setupBodyP, setupButtonP, offlineP, offlineLineP;
     private Paint toastP, labelP;
     private Paint glanceHeadP, glanceBodyP, glanceTempP, glanceValueP;
-    private boolean inputsReady, pendingInputs;
+    private boolean inputsReady, pendingInputs, pendingAppEdit;
+    private ResumePrompt resumePrompt;
     private TextPaint heroTitleP;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint image = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
@@ -333,6 +341,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         entries = ContinueWatching.cached(a);
         buildRow();
         online = hasNetwork();
+        zone = restZone();
         if (Opening.due(a)) playOpening();
     }
 
@@ -356,14 +365,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         refreshPhoneCodes();
         ContinueWatching.Entry interrupted = PlaybackSession.interrupted(getContext());
         if (interrupted != null && !interrupted.video.equals(interruptedShown)) {
-            interruptedShown = interrupted.video;
-            handler.postDelayed(() -> {
-                if (!running || opening != null) return;
-                PlayerSheet.show(activity, Ui.tr("Continuar de onde parou?", "Resume playback?"),
-                        java.util.Arrays.asList(Ui.tr("Continuar ", "Resume ") + interrupted.title, Ui.tr("Agora não", "Not now")), 0,
-                        java.util.Arrays.asList(() -> { PlaybackSession.clearInterrupted(getContext()); resume(interrupted); },
-                                () -> PlaybackSession.clearInterrupted(getContext())), () -> {});
-            }, 4500);
+            handler.postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (!running || interrupted.video.equals(interruptedShown)) return;
+                    if (opening != null) { handler.postDelayed(this, 250); return; }
+                    interruptedShown = interrupted.video;
+                    resumePrompt = new ResumePrompt(activity, interrupted,
+                            () -> { PlaybackSession.clearInterrupted(getContext()); resume(interrupted); },
+                            () -> PlaybackSession.clearInterrupted(getContext()));
+                }
+            }, 400);
         }
         lastNanos = 0;
         data.addListener(this);
@@ -388,6 +399,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     void pause() {
+        if (resumePrompt != null) { resumePrompt.dialog.dismiss(); resumePrompt = null; }
         if (!running) return;
         running = false;
         PhoneLink.setTypingListener(null);
@@ -440,7 +452,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (editing) finishEditing();
         if (mode == SEARCH) setQuery("");
         setMode(REST);
-        zone = Z_PILL;
+        zone = restZone();
         rowIndex = 0;
         rowScroll.snap(0);
         if (!animated) {
@@ -448,6 +460,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             searchT.snap(0);
         }
         changed();
+    }
+
+    private int restZone() {
+        if (!online) return shelf.isEmpty() ? Z_ICONS : Z_LOGOS;
+        return Setup.hasKey() ? Z_PILL : Z_SETUP;
     }
 
     // MARK: - Data
@@ -488,6 +505,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (overlayKind != OV_ALL) allApps = allAppsList();
                 changed();
                 if (pendingInputs) { pendingInputs = false; openInputs(); }
+                if (pendingAppEdit) { pendingAppEdit = false; openAppEditor(); }
             });
         });
     }
@@ -517,6 +535,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Continue Watching, then what's trending on the TV's apps; the focused card stays focused. */
     private void buildRow() {
+        int previousIndex = rowIndex;
         String focused = rowIndex < row.size() ? row.get(rowIndex).key : null;
         row.clear();
         String cw = Ui.tr("Continuar assistindo", "Continue Watching");
@@ -546,10 +565,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             rowFocus = new Spring[row.size()];
             for (int i = 0; i < rowFocus.length; i++) rowFocus[i] = new Spring(0.28f, 0.86f, 0);
         }
-        rowIndex = 0;
+        rowIndex = Math.min(previousIndex, Math.max(0, row.size() - 1));
         for (int i = 0; i < row.size(); i++) if (row.get(i).key.equals(focused)) rowIndex = i;
         if (row.isEmpty() && (zone == Z_ROW || zone == Z_HERO)) {
-            zone = Z_PILL;
+            zone = shelf.isEmpty() ? Z_PILL : Z_LOGOS;
             setMode(REST);
         }
         if (zone == Z_CHIP && chipEntry() == null) zone = Z_PILL;
@@ -2311,6 +2330,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     void openRemoteInputs() {
         if (opening != null) opening.skip();
         if (inputsReady && running) openInputs(); else pendingInputs = true;
+    }
+
+    void openAppEditor() {
+        if (opening != null) opening.skip();
+        if (!inputsReady || !running) { pendingAppEdit = true; return; }
+        setMode(REST);
+        if (shelf.isEmpty()) { openAllApps(); return; }
+        zone = Z_LOGOS;
+        editing = true;
+        aimRow(false);
+        changed();
     }
 
     // MARK: - Editing the app row in place
