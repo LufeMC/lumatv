@@ -48,6 +48,11 @@ final class Adb implements Closeable {
     /** Notified when the TV is showing the permission prompt (so the screen can explain what to do). */
     interface Approval { void waiting(); }
 
+    /** The TV doesn't know (or no longer trusts) the app's key, and we chose not to show the prompt. */
+    static final class NotApproved extends IOException {
+        NotApproved() { super("debugging permission is missing on the TV"); }
+    }
+
     private static final class Message {
         int command, arg0, arg1;
         byte[] data;
@@ -57,6 +62,7 @@ final class Adb implements Closeable {
     private final DataInputStream in;
     private final OutputStream out;
     private int nextLocalId = 1;
+    private int maxData = 4096;
 
     private Adb(Socket socket) throws IOException {
         this.socket = socket;
@@ -66,6 +72,19 @@ final class Adb implements Closeable {
 
     /** Connects and authenticates. If the TV doesn't know our key yet, waits up to `approvalMs` for you to accept. */
     static Adb connect(Context c, int approvalMs, Approval approval) throws IOException {
+        return open(c, approvalMs, approval, false);
+    }
+
+    /**
+     * Connects only if the TV already trusts the app's key: never shows "Allow USB debugging?" (for background work
+     * while someone may be watching). Each successful connection also renews the TV's "Always allow" (Android
+     * forgets keys unused for 7 days). Throws NotApproved otherwise.
+     */
+    static Adb connectQuiet(Context c) throws IOException {
+        return open(c, 0, null, true);
+    }
+
+    private static Adb open(Context c, int approvalMs, Approval approval, boolean quiet) throws IOException {
         KeyPair keys = keys(c);
         Socket s = new Socket();
         try {
@@ -88,6 +107,7 @@ final class Adb implements Closeable {
                 }
                 if (m.command == CNXN) {
                     s.setSoTimeout(20_000);
+                    if (m.arg1 > 0) adb.maxData = Math.min(m.arg1, MAX_DATA);
                     return adb;
                 }
                 if (m.command == STLS) throw new IOException("the TV asked for TLS (wireless debugging); use USB debugging");
@@ -95,6 +115,8 @@ final class Adb implements Closeable {
                 if (!signed) {
                     adb.send(AUTH, AUTH_SIGNATURE, 0, sign(keys.getPrivate(), m.data));
                     signed = true;
+                } else if (quiet) {
+                    throw new NotApproved();
                 } else if (!offeredKey) {
                     // Unknown key: send the public one; the TV shows "Allow USB debugging?".
                     adb.send(AUTH, AUTH_RSAPUBLICKEY, 0, publicKeyBlob(keys.getPublic()));
@@ -127,6 +149,56 @@ final class Adb implements Closeable {
                 send(OKAY, local, m.arg0, null);
             } else if (m.command == CLSE) {
                 if (remote == 0 && m.arg0 == 0) throw new IOException("ADB refused the command");
+                send(CLSE, local, m.arg0, null);
+                return result.toString("UTF-8");
+            }
+        }
+    }
+
+    /**
+     * Installs an APK over this app, streamed to `cmd package install -S` (the shell can't read the app's private
+     * files). Returns pm's output ("Success" or the reason). The install stops this app's processes, so the caller
+     * may not live to read the answer: record what you're doing first.
+     */
+    String install(java.io.InputStream apk, long size) throws IOException {
+        int local = nextLocalId++;
+        send(OPEN, local, 0, ("exec:cmd package install -r -S " + size + "\0").getBytes(StandardCharsets.UTF_8));
+        int remote = 0;
+        ByteArrayOutputStream result = new ByteArrayOutputStream();
+        while (remote == 0) {
+            Message m = read();
+            if (m.arg1 != local) continue;
+            if (m.command == OKAY) remote = m.arg0;
+            else if (m.command == CLSE) throw new IOException("ADB refused the install");
+        }
+        socket.setSoTimeout(120_000);
+        byte[] buffer = new byte[Math.max(1024, maxData)];
+        long sent = 0;
+        while (sent < size) {
+            int n = apk.read(buffer, 0, (int) Math.min(buffer.length, size - sent));
+            if (n < 0) throw new IOException("the update file ended early");
+            send(WRTE, local, remote, java.util.Arrays.copyOf(buffer, n));
+            sent += n;
+            // One write in flight: wait for the TV to take it (it may answer with output first).
+            while (true) {
+                Message m = read();
+                if (m.arg1 != local) continue;
+                if (m.command == OKAY) break;
+                if (m.command == WRTE) {
+                    result.write(m.data);
+                    send(OKAY, local, m.arg0, null);
+                } else if (m.command == CLSE) {
+                    return result.toString("UTF-8");
+                }
+            }
+        }
+        while (true) {
+            Message m = read();
+            if (m.arg1 != local) continue;
+            if (m.command == WRTE) {
+                result.write(m.data);
+                send(OKAY, local, m.arg0, null);
+            } else if (m.command == CLSE) {
                 send(CLSE, local, m.arg0, null);
                 return result.toString("UTF-8");
             }

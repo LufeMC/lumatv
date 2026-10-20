@@ -91,6 +91,17 @@ final class HomeMode {
     /** After the TV boots (and after a TV update): wait for the system to settle and check LumaTV mode. */
     static void bootCheck(Context c) {
         ModeJob.schedule(c, ModeJob.VERIFY, null, 45_000);
+        ModeJob.scheduleDaily(c);
+    }
+
+    /** You chose the mode that's already on: renew the debugging approval (the TV may ask again) and check it all. */
+    static void requestReapprove(Context c) {
+        ModeJob.schedule(c, ModeJob.REAPPROVE, null, 0);
+    }
+
+    /** The first remote button was mapped: turn the RemoteKeys service on if LumaTV mode is. */
+    static void requestRemoteKeys(Context c) {
+        ModeJob.schedule(c, ModeJob.REMOTE_KEYS, null, 0);
     }
 
     /** After an update of this app: complete LumaTV mode if anything is missing. */
@@ -130,6 +141,7 @@ final class HomeMode {
             check(adb.shell("cmd package set-home-activity " + HOME_ACTIVITY), "Success",
                     Ui.tr("o Android não aceitou o novo Início", "Android didn't accept the new home screen"));
             adb.shell("settings put secure screensaver_components " + DREAM);
+            enableRemoteKeys(c, adb);
             List<String> targets = targets(home, dream);
             Set<String> disabled = new HashSet<>(stringList(state(c), "disabled"));
             Set<String> present = packages(adb, "");
@@ -182,6 +194,7 @@ final class HomeMode {
             busy(c, Ui.tr("Devolvendo o Início original…", "Restoring the original home screen…"));
             boolean homeOk = restoreHome(adb, home);
             adb.shell("settings delete secure screensaver_components");
+            disableRemoteKeys(c, adb);
             s = state(c);
             s.put("mode", ORIGINAL).put("since", System.currentTimeMillis()).put("homeReverted", false)
                     .put("disabled", new JSONArray(failed));
@@ -223,19 +236,29 @@ final class HomeMode {
                 JSONObject s = state(app);
                 String home = originalHome(s);
                 adb.shell("pm enable " + GOOGLE_SETUP);
-                restoreHome(adb, home);
+                boolean ok = restoreHome(adb, home);
                 String homePkg = packageOf(home);
                 JSONArray kept = new JSONArray();
                 for (String pkg : stringList(s, "disabled")) {
                     if (!pkg.equals(GOOGLE_SETUP) && !pkg.equals(homePkg)) kept.put(pkg);
                 }
-                s.put("homeReverted", true).put("disabled", kept);
+                s = state(app);
+                s.put("homeReverted", ok).put("disabled", kept).put("revert", new JSONObject()
+                        .put("at", System.currentTimeMillis()).put("ok", ok));
                 save(app, s);
-                notice(app, Ui.tr("O Início da LumaTV caiu 3 vezes seguidas; voltei para o Início original.",
-                        "LumaTV's home screen crashed 3 times in a row; I switched back to the original one."));
-                adb.shell("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
+                notice(app, ok ? Ui.tr("O Início da LumaTV parou 3 vezes seguidas; voltei para o Início original.",
+                        "LumaTV's home screen stopped 3 times in a row; I switched back to the original one.")
+                        : Ui.tr("O Início da LumaTV parou 3 vezes, e não consegui voltar ao Início original.",
+                        "LumaTV's home screen stopped 3 times, and switching back to the original one didn't work."));
+                if (ok) adb.shell("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
             } catch (Exception e) {
                 AppLog.w("could not give the home screen back: " + e.getMessage());
+                JSONObject s = state(app);
+                try {
+                    s.put("revert", new JSONObject().put("at", System.currentTimeMillis()).put("ok", false)
+                            .put("error", String.valueOf(e.getMessage())));
+                } catch (JSONException ignored) {}
+                save(app, s);
             }
         }
     }
@@ -256,7 +279,9 @@ final class HomeMode {
             } catch (JSONException ignored) {}
             if (!FREE.equals(s.optString("mode"))) return;
             List<String> fixed = new ArrayList<>();
-            try (Adb adb = Adb.connect(app, 10_000, null)) {
+            // Quiet: this runs after boot, maybe while someone watches; never show the debugging prompt then.
+            try (Adb adb = Adb.connectQuiet(app)) {
+                approved(app, true);
                 Set<String> present = packages(adb, "");
                 Set<String> disabledNow = packages(adb, "-d");
                 boolean reverted = s.optBoolean("homeReverted");
@@ -288,6 +313,10 @@ final class HomeMode {
                 JSONObject latest = state(app);
                 latest.put("disabled", new JSONArray(sorted(disabled)));
                 save(app, latest);
+                if (enableRemoteKeys(app, adb)) fixed.add(Ui.tr("os botões do controle", "the remote buttons"));
+            } catch (Adb.NotApproved e) {
+                approved(app, false);
+                return;
             } catch (Exception e) {
                 notice(app, Ui.tr("Não consegui conferir a LumaTV: ", "Couldn't check LumaTV: ") + e.getMessage());
                 return;
@@ -298,6 +327,131 @@ final class HomeMode {
             } else if (updated) {
                 notice(app, Ui.tr("A TV foi atualizada; a LumaTV continua igual.", "The TV was updated; LumaTV is still on."));
             }
+        }
+    }
+
+    // MARK: - Remote buttons (the RemoteKeys accessibility service, on only in LumaTV mode)
+
+    /**
+     * Adds RemoteKeys to the TV's enabled accessibility services, keeping the others. The values from before are
+     * recorded once, so Original puts back exactly what was there. Returns true if it changed anything. Never throws:
+     * the remote buttons are an extra, not a reason for a switch to fail.
+     */
+    static boolean enableRemoteKeys(Context c, Adb adb) {
+        try {
+            String component = RemoteKeys.component(c);
+            String services = adb.shell("settings get secure enabled_accessibility_services").trim();
+            String enabled = adb.shell("settings get secure accessibility_enabled").trim();
+            JSONObject s = state(c);
+            if (!s.has("a11yServices")) {
+                s.put("a11yServices", services).put("a11yEnabled", enabled);
+                save(c, s);
+            }
+            String next = RemoteKeys.withService(services, component);
+            boolean changed = false;
+            if (!next.equals(services)) {
+                adb.shell("settings put secure enabled_accessibility_services " + next);
+                changed = true;
+            }
+            if (!"1".equals(enabled)) {
+                adb.shell("settings put secure accessibility_enabled 1");
+                changed = true;
+            }
+            return changed;
+        } catch (Exception e) {
+            AppLog.w("remote buttons not turned on: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Takes RemoteKeys out and restores the recorded values (RemoteKeys.restoreServices decides what exactly). */
+    static void disableRemoteKeys(Context c, Adb adb) {
+        try {
+            JSONObject s = state(c);
+            String component = RemoteKeys.component(c);
+            String services = adb.shell("settings get secure enabled_accessibility_services").trim();
+            if (!s.has("a11yServices") && !RemoteKeys.contains(services, component)) return;
+            String saved = s.has("a11yServices") ? s.optString("a11yServices") : services;
+            String restored = RemoteKeys.restoreServices(saved, services, component);
+            if (restored == null) adb.shell("settings delete secure enabled_accessibility_services");
+            else adb.shell("settings put secure enabled_accessibility_services " + restored);
+            String enabled = RemoteKeys.restoreEnabled(s.optString("a11yEnabled", "null"), restored);
+            if (enabled == null) adb.shell("settings delete secure accessibility_enabled");
+            else adb.shell("settings put secure accessibility_enabled " + enabled);
+            JSONObject latest = state(c);
+            latest.remove("a11yServices");
+            latest.remove("a11yEnabled");
+            save(c, latest);
+        } catch (Exception e) {
+            AppLog.w("remote buttons not turned off: " + e.getMessage());
+        }
+    }
+
+    /** The first mapped button in LumaTV mode: make sure the service is on (quietly; no prompt from here). */
+    static void remoteKeysNow(Context app) {
+        synchronized (RUN) {
+            JSONObject s = state(app);
+            if (!FREE.equals(s.optString("mode"))) return;
+            try (Adb adb = Adb.connectQuiet(app)) {
+                approved(app, true);
+                enableRemoteKeys(app, adb);
+            } catch (Adb.NotApproved e) {
+                approved(app, false);
+            } catch (Exception e) {
+                AppLog.w("remote buttons: " + e.getMessage());
+            }
+        }
+    }
+
+    // MARK: - Keeping the debugging approval alive
+
+    /** You chose the mode that's already on: connect with the prompt allowed (you're at the TV), then check it all. */
+    static void reapproveNow(Context c) {
+        synchronized (RUN) {
+            JSONObject s = state(c);
+            try (Adb adb = connect(c, s)) {
+                approved(c, true);
+                done(c, null);
+                notice(c, Ui.tr("A permissão de depuração está em dia.", "The debugging permission is up to date."));
+            } catch (Exception e) {
+                done(c, Ui.tr("Não deu para renovar a permissão: ", "Couldn't renew the permission: ") + e.getMessage());
+                return;
+            }
+        }
+        if (FREE.equals(state(c).optString("mode"))) verifyNow(c);
+    }
+
+    /**
+     * The daily quiet check (ModeJob.KEEP_ALIVE): a connection with the key the TV already trusts, which renews the
+     * TV's "Always allow" before Android forgets it (7 days unused). Never prompts; if the approval is gone, leaves one
+     * notice saying how to renew it.
+     */
+    static void keepAliveNow(Context c) {
+        synchronized (RUN) {
+            if (!state(c).optBoolean("adbAuthorized")) return;   // never switched yet: nothing to keep
+            try (Adb adb = Adb.connectQuiet(c)) {
+                adb.shell("echo ok");
+                approved(c, true);
+            } catch (Adb.NotApproved e) {
+                approved(c, false);
+            } catch (Exception e) {
+                AppLog.w("approval check skipped: " + e.getMessage());   // debugging off, or the TV was busy
+            }
+        }
+    }
+
+    /** Records whether the TV still trusts the app's key; on the first "no", leaves a notice with the way back. */
+    private static void approved(Context c, boolean ok) {
+        JSONObject s = state(c);
+        boolean wasMissing = s.optBoolean("approvalMissing");
+        try {
+            s.put("approvalMissing", !ok);
+            if (ok) s.put("approvalCheckedAt", System.currentTimeMillis());
+        } catch (JSONException ignored) {}
+        save(c, s);
+        if (!ok && !wasMissing) {
+            notice(c, Ui.tr("A TV esqueceu a permissão de depuração. Em Início, escolha o modo atual de novo para renová-la.",
+                    "The TV forgot the debugging permission. In Home screen, choose the current mode again to renew it."));
         }
     }
 
@@ -385,6 +539,7 @@ final class HomeMode {
             try { latest.put("adbAuthorized", true); } catch (JSONException ignored) {}
             save(c, latest);
         }
+        approved(c, true);
         return adb;
     }
 
@@ -414,7 +569,7 @@ final class HomeMode {
     static void measureMemoryNow(Context c, String mode) {
         synchronized (RUN) {
             if (!mode.equals(state(c).optString("mode"))) return;
-            try (Adb adb = Adb.connect(c, 10_000, null)) {
+            try (Adb adb = Adb.connectQuiet(c)) {
                 measureMemory(c, adb, mode);
             } catch (Exception e) {
                 AppLog.w("memory measurement failed: " + e.getMessage());

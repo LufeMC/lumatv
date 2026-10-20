@@ -96,6 +96,26 @@ final class Prefs {
     }
 
     static void setRemoteMap(Context c, JSONObject map) {
-        get(c, REMOTE).edit().putString("map", map.toString()).apply();
+        get(c, REMOTE).edit().putString("map", map.toString()).commit();
+    }
+
+    /**
+     * The remote map as written by another process (Settings runs in :home, the RemoteKeys service in the main one):
+     * MODE_MULTI_PROCESS re-reads the file when it changed on disk. Cheap when it didn't.
+     */
+    @SuppressWarnings("deprecation")
+    static JSONObject remoteMapFresh(Context c) {
+        try {
+            return new JSONObject(c.getApplicationContext().getSharedPreferences(REMOTE, Context.MODE_MULTI_PROCESS)
+                    .getString("map", "{}"));
+        } catch (JSONException e) {
+            return new JSONObject();
+        }
+    }
+
+    /** The look setting: "sunset" (default: day look by day, night look after sunset), "day" or "night". */
+    static String look(Context c) {
+        String v = get(c, HOME_UI).getString(LOOK, "sunset");
+        return "day".equals(v) || "night".equals(v) ? v : "sunset";
     }
 }
