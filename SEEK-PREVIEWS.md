@@ -180,3 +180,13 @@ It recorded no dropped playback frames during that sample.
 The three-second automatic confirmation and Back cancellation passed.
 Unprepared positions and unsupported codecs can require a slower fallback.
 These results do not establish a maximum delay for every source.
+
+## Installed completion build
+
+The LumaTV 1.1.37 repeat test measured 86, 30, 32, 32, 29, and 30 milliseconds for prepared-image draws.
+The test began with an empty JPEG preview cache.
+It observed 60 seconds of real playback before the seek checks.
+Video and advancing decoded audio remained valid, with no dropped frames.
+The test also verified Back cancellation and three-second automatic confirmation.
+Physical remote transmission and panel response are outside these measurements.
+Unprepared positions retain the documented fallback limits.

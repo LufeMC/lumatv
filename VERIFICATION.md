@@ -180,3 +180,34 @@ See [DESIGN-ACCEPTANCE.md](DESIGN-ACCEPTANCE.md) for the selected design states 
 The source includes the approved feature groups.
 The remaining external actions are the off-computer backup and activation between two physical TVs.
 The Hisense remains excluded under the current device instruction.
+
+## Installed completion build
+
+LumaTV 1.1.37, version code 137, was built from commit `5f4271f`.
+Its installed APK matches the saved build by SHA-256.
+The original signing certificate remains unchanged.
+The release DEX excludes the configured API token and coordinates.
+
+The final build passed these checks again:
+
+- Player controls, tracks, and source recovery: 40 checks.
+- Source failures and media caching: 50 checks.
+- Phone connection and setup: 11 checks.
+- Settings and system behavior: 119 checks.
+- Real playback, prepared previews, seek cancellation, and automatic confirmation.
+- Host logic: 57 checks.
+
+The first final preview attempt stopped when the G3 memory service terminated the application.
+Android recorded an external process stop, without an application exception.
+After Android speed compilation completed, the repeated test passed.
+The TV firmware and services remained unchanged.
+
+The repeated test observed 60 seconds of playback with no dropped frames.
+Six prepared-image draws took 86, 30, 32, 32, 29, and 30 milliseconds.
+These measurements exclude physical remote transmission and panel response.
+Unprepared images can still need additional decoding and network time.
+
+All six protected household preference checksums remained unchanged.
+Encrypted setup remained available, with Celsius selected.
+The temporary test package and large generated video files were removed.
+No GitHub release was published.

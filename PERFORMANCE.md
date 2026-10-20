@@ -218,6 +218,28 @@ These measurements used the same G3 as the earlier 696-millisecond optimized bas
 The small sample shows no startup regression under these conditions.
 It does not establish a performance guarantee for all TVs.
 
+## Installed completion build
+
+LumaTV 1.1.37 recorded process-cold first-display times of 626, 748, and 712 milliseconds.
+The median was 712 milliseconds.
+The later Home PSS sample was 56,478 KiB.
+Android speed compilation and existing filesystem caches were present.
+These samples do not measure a complete TV restart.
+The earlier original median was 2,077 milliseconds on this TV.
+The small samples do not isolate application changes from compilation or resident system state.
+
+The final real-playback check recorded no dropped frames over 60 seconds.
+Six prepared-preview draws took 86, 30, 32, 32, 29, and 30 milliseconds.
+Back cancellation and three-second automatic confirmation passed.
+The application prepared eleven frames during the test.
+The preview reader requested 13,744,420 network bytes, including overlap with playback data.
+Unprepared positions and unsupported formats retain a slower fallback.
+
+The first preview attempt stopped through the G3 memory-cleanup service.
+The repeated attempt passed after compilation completed.
+No firmware service was disabled.
+The private records are `performance-completion.json` and `prepared-preview-completion.json` in the recovery output directory.
+
 ## High-bitrate and episode-transition checks
 
 The completion pass played generated 1080p AVC at approximately 55.1 Mbps.
