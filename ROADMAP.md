@@ -1,6 +1,7 @@
 # LumaTV improvements
 
-55 in total, all approved for the build (October 20). Nothing here is implemented yet; coding starts when you say so.
+55 improvements were approved on October 20. Implementation and verification are in progress.
+See [VERIFICATION.md](VERIFICATION.md) for the current evidence and remaining limits.
 
 ## Your list (21)
 
@@ -33,7 +34,7 @@ Picks 1 and 2 (repo safety and the signing key) go with the GitHub publish: the 
 ## Top picks
 
 **1. Get the code ready for your public GitHub repo**
-- **What:** Move household details out of the tracked docs into a local file that git ignores. That covers the TV network addresses, /Users/luis paths, "Luis's Mac" and the city. Then:
+- **What:** Move household details out of the tracked docs into a local file that git ignores. That covers the TV network addresses, personal filesystem paths, "Luis's Mac" and the city. Then:
   - add a secret scanner that runs before each push;
   - commit the work as a few logical commits on top of the original;
   - push to your repo as `origin` and keep the original repo as `upstream`;

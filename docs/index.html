@@ -43,6 +43,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<div style="padding:16px;text-align:center;background:#151923;color:#f5f3ef">This page describes the original version. Read the current LumaTV instructions in the <a style="color:inherit;text-decoration:underline" href="https://github.com/LufeMC/lumatv/tree/redesign/lumatv#readme">README</a>.</div>
   <div class="sky" aria-hidden="true"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span></div>
 
   <header class="nav" id="nav">
@@ -222,7 +223,7 @@
               <div class="code"><code>git clone https://github.com/LufeMC/lumatv &amp;&amp; cd lumatv</code><button class="copy-btn" type="button" aria-label="Copy command">Copy</button></div>
             </li>
             <li><b>Open Claude Code in that folder and say:</b>
-              <div class="code prompt"><code>Install Free My TV on my TV at 192.168.1.50. I live in Lisbon.</code><button class="copy-btn" type="button" aria-label="Copy prompt">Copy</button></div>
+              <div class="code prompt"><code>Install Free My TV on my TV at 192.0.2.50. I live in Lisbon.</code><button class="copy-btn" type="button" aria-label="Copy prompt">Copy</button></div>
               It installs the tools it needs, builds the app and puts it on your TV. Swap in your TV's IP and your city.
             </li>
             <li><b>Back on the TV:</b> open <em>Free My TV</em> → <em>Home Screen</em> → <em>Free My TV</em>, and accept the debugging prompt (tick <em>Always allow</em>).</li>
@@ -239,7 +240,7 @@
               <div class="code"><code>git clone https://github.com/LufeMC/lumatv &amp;&amp; cd lumatv &amp;&amp; ./build.sh</code><button class="copy-btn" type="button" aria-label="Copy command">Copy</button></div>
             </li>
             <li><b>Install:</b>
-              <div class="code"><code>adb connect 192.168.1.50:5555 &amp;&amp; adb install -r FreeMyTV.apk</code><button class="copy-btn" type="button" aria-label="Copy command">Copy</button></div>
+              <div class="code"><code>adb connect 192.0.2.50:5555 &amp;&amp; adb install -r FreeMyTV.apk</code><button class="copy-btn" type="button" aria-label="Copy command">Copy</button></div>
               On TCL TVs, also let it run in the background (TCL blocks it by default):
               <div class="code"><code>adb shell appops set io.freemytv AUTO_START allow</code><button class="copy-btn" type="button" aria-label="Copy command">Copy</button></div>
             </li>

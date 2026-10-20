@@ -5,7 +5,7 @@ Additional playback tests ran on October 20.
 The Hisense TV did not receive this update.
 The user authorized second-TV tests again on October 20, 2026.
 
-## Initial home screen measurements
+## Historical home screen measurements
 
 | Measurement | Before | After |
 | --- | ---: | ---: |
@@ -174,3 +174,46 @@ The observation recorded no dropped video frames.
 Background decoding still requires CPU time and can request additional video data.
 Unsupported formats and unprepared positions retain a slower fallback.
 See `SEEK-PREVIEWS.md` for resource limits and complete measurements.
+
+## LumaTV redesign checkpoint
+
+The redesigned Home uses a Canvas with event-driven rendering.
+It releases hidden Home, search, title, and application artwork.
+The screensaver uses a dark landscape without a continuous animation loop.
+Dark appearance remains the default during the day.
+
+A redesigned Home instrumentation sample produced these results.
+
+| Measurement | Result |
+| --- | ---: |
+| Activity open | 565 ms |
+| Application row ready | 892 ms |
+| Landscape ready | 893 ms |
+| Input-to-draw median | 14.6 ms |
+| Input-to-draw maximum | 17.4 ms |
+| Home PSS | 90,078 KiB |
+| Idle process CPU over ten seconds | 248 ms |
+| Idle callbacks over ten seconds | 1 |
+| Idle network bytes | 0 |
+
+The figures include instrumentation and do not measure a complete TV restart.
+The application row measurement is separate from first display.
+A four-second screensaver sample recorded no redraws and 52 milliseconds of total process CPU.
+
+A redesigned player test observed 60 seconds of real episode playback.
+Video and advancing decoded audio passed verification.
+The test recorded no dropped frames.
+Prepared preview draw times ranged from 26 to 51 milliseconds across six samples.
+See [SEEK-PREVIEWS.md](SEEK-PREVIEWS.md) for the cache and codec limits.
+
+The redesigned player passed the extended 40-check track suite.
+The firmware can still stop foreground applications when system memory becomes low.
+No OEM service was disabled.
+The measurements do not establish electricity savings or performance for every 4K source.
+
+The normal process-cold measurement recorded 628, 693, and 710 milliseconds after Android speed compilation.
+The median was 693 milliseconds.
+The later Home PSS sample was 53,731 KiB.
+These measurements used the same G3 as the earlier 696-millisecond optimized baseline.
+The small sample shows no startup regression under these conditions.
+It does not establish a performance guarantee for all TVs.

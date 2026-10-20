@@ -43,7 +43,9 @@ Temporary decoder buffers and display references require additional memory.
 The private JPEG cache retains at most 16 MiB and 768 files.
 The random-read page cache retains approximately 1 MiB.
 Video reads share the existing 64 MiB media cache.
-The playback buffer target is 20 MiB, with a 15-second backward buffer.
+The playback buffer target is 20 MiB.
+The backward buffer uses at most one quarter of that target, based on the source bitrate.
+At high bitrates, its duration can be less than one second.
 
 Initial preparation requires at least 480 MiB of available system memory.
 An initialized reader normally requires 470 MiB.
@@ -166,3 +168,15 @@ Technical references:
 - [JCodec source and license](https://github.com/jcodec/jcodec)
 - [Android MediaExtractor](https://developer.android.com/reference/android/media/MediaExtractor)
 - [Android MediaDataSource](https://developer.android.com/reference/android/media/MediaDataSource)
+
+## LumaTV redesign checkpoint
+
+The October 20 redesign retained background preview preparation.
+A real 60-second episode test recorded six remote-input-to-preview-draw samples.
+The samples were 51, 30, 26, 31, 29, and 31 milliseconds.
+These measurements use prepared frames and exclude the physical remote and panel response.
+The test prepared 11 frames and recorded approximately 2 MiB of preview network reads.
+It recorded no dropped playback frames during that sample.
+The three-second automatic confirmation and Back cancellation passed.
+Unprepared positions and unsupported codecs can require a slower fallback.
+These results do not establish a maximum delay for every source.
