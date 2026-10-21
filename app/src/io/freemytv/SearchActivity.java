@@ -67,6 +67,14 @@ public class SearchActivity extends TvActivity {
             }
             public void clear() { query.setText(""); }
             public void voice() { try { startActivityForResult(voiceIntent(), 20); } catch (RuntimeException e) { status.setText(Ui.tr("A voz não está disponível.", "Voice input is unavailable.")); } }
+            public boolean exit(int keyCode) {
+                if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return query.requestFocus();
+                if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    for (View target : content.getFocusables(View.FOCUS_FORWARD))
+                        if (target.isShown() && target.requestFocus()) return true;
+                }
+                return false;
+            }
         });
         keys.setId(View.generateViewId()); query.setNextFocusDownId(keys.getId()); keys.setNextFocusUpId(query.getId());
         root.addView(keys, at(480, 472, 96, 224, 0));
@@ -180,7 +188,7 @@ public class SearchActivity extends TvActivity {
         else titleRow = row(label);
         for (int i = 0; i < Math.min(20, found.size()); i++) {
             TitleSearch.Title title = found.get(i);
-            if (posters && i % 6 == 0) {
+            if (posters && i % 4 == 0) {
                 titleRow = new LinearLayout(this); titleRow.setClipChildren(false); grid.addView(titleRow, gap(-1, -2, i == 0 ? 0 : 36));
             }
             int width = posters ? 264 : 400, height = posters ? 396 : 225;
@@ -192,6 +200,7 @@ public class SearchActivity extends TvActivity {
                 card.setOnClickListener(v -> { remember(); showOptions(title); }); titleCards.put(key, card);
                 load(tile, posters ? title.poster : title.backdrop == null || title.backdrop.isEmpty() ? title.poster : title.backdrop, generation);
             } else if (card.getParent() instanceof ViewGroup) ((ViewGroup) card.getParent()).removeView(card);
+            card.setNextFocusLeftId(posters && i % 4 == 0 ? keys.getId() : View.NO_ID);
             LinearLayout.LayoutParams cp = gap(px(width), -2, 0); cp.rightMargin = px(28); titleRow.addView(card, cp);
             if (i < 6) fillProvider(card, title, generation);
         }

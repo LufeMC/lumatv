@@ -228,6 +228,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final List<Result> results = new ArrayList<>();
     private final List<HomeApps.Item> appResults = new ArrayList<>();
     private final List<String> recent = new ArrayList<>();
+    private final List<String> recentFits = new ArrayList<>();
     private final List<Section> sections = new ArrayList<>();
     private int sectionIndex;
     private final Spring searchScroll = new Spring(0.42f, 1f, 0);
@@ -767,6 +768,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         k = w / 1920f;
         screen.set(0, 0, w, h);
         makePaints();
+        fitRecent();
         makeShaders();
         layoutLogos();
         whiteLogos.clear();
@@ -1634,7 +1636,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             float x = RESULTS_LEFT * k, y = top + 64 * k;
             for (int i = 0; i < recent.size(); i++) {
                 String q = recent.get(i);
-                String label = TextUtils.ellipsize(q, new TextPaint(recentP), (RIGHT - RESULTS_LEFT - 56) * k, TextUtils.TruncateAt.END).toString();
+                String label = i < recentFits.size() ? recentFits.get(i) : q;
                 float bw = recentP.measureText(label) + 56 * k;
                 r.set(x, y, x + bw, y + 60 * k);
                 boolean on = overlayKind == OV_NONE && zone == Z_RECENT && recentIndex == i;
@@ -1652,8 +1654,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             else if (!searchError.isEmpty()) label = searchError;
             else label = Ui.tr("Nenhum título com “", "No titles match “") + query.trim() + "”";
             labelP.setColor(Ui.alpha(Look.INK, 0.66f * alpha));
-            label = TextUtils.ellipsize(label, new TextPaint(labelP), (RIGHT - RESULTS_LEFT) * k, TextUtils.TruncateAt.END).toString();
+            c.save(); c.clipRect(RESULTS_LEFT * k, top, RIGHT * k, h);
             c.drawText(label, RESULTS_LEFT * k, top + 24 * 0.96f * k, labelP);
+            c.restore();
             return;
         }
         // Results stay beside the keyboard while their rows scroll.
@@ -3039,6 +3042,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             for (int i = 0; i < a.length() && recent.size() < 5; i++) recent.add(a.getString(i));
         } catch (Exception ignored) {
         }
+        fitRecent();
+    }
+
+    private void fitRecent() {
+        recentFits.clear();
+        if (recentP == null) return;
+        TextPaint paint = new TextPaint(recentP);
+        for (String value : recent) recentFits.add(TextUtils.ellipsize(value, paint,
+                (RIGHT - RESULTS_LEFT - 56) * k, TextUtils.TruncateAt.END).toString());
     }
 
     private void remember(String q) {
@@ -3047,6 +3059,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recent.remove(clean);
         recent.add(0, clean);
         while (recent.size() > 5) recent.remove(recent.size() - 1);
+        fitRecent();
         ui.edit().putString(Prefs.RECENT_SEARCHES, new JSONArray(recent).toString()).apply();
     }
 

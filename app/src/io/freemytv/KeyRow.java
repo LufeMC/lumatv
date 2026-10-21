@@ -16,8 +16,11 @@ final class KeyRow extends View {
         void delete();
         void clear();
         void voice();
+        default boolean exit(int keyCode) { return false; }
     }
     private static final String LETTERS = "abcdefghijklmnopqrstuvwxyz", DIGITS = "1234567890-'&:.,!?()/+@#%_";
+    private static final String[] LABELS = new String[128];
+    static { for (int i = 0; i < LABELS.length; i++) LABELS[i] = String.valueOf((char) i); }
     private static final int SPACE = -1, DELETE = -2, NUMBERS = -3, CLEAR = -4, VOICE = -5;
     private final Listener listener;
     private final boolean hasVoice;
@@ -62,7 +65,7 @@ final class KeyRow extends View {
         return index;
     }
     private String label(int code) {
-        if (code >= 0) return String.valueOf((char) code);
+        if (code >= 0) return LABELS[code];
         switch (code) {
             case SPACE: return Ui.tr("Espaço", "Space");
             case DELETE: return Ui.tr("Apagar", "Delete");
@@ -93,11 +96,11 @@ final class KeyRow extends View {
             if (col(index) == 0) return true;
             column = col(index) - 1; next = at(row(index), column);
         } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-            if (col(index) + span(index) == 6) return false;
+            if (col(index) + span(index) == 6) return listener.exit(key);
             column = col(index) + span(index); next = at(row(index), column);
         } else {
             int nextRow = row(index) + (key == KeyEvent.KEYCODE_DPAD_UP ? -1 : 1);
-            if (nextRow < 0 || nextRow > 5) return false;
+            if (nextRow < 0 || nextRow > 5) return listener.exit(key);
             next = at(nextRow, column);
         }
         index = next;

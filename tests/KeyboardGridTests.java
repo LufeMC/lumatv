@@ -50,7 +50,7 @@ public class KeyboardGridTests extends TvTest {
             check("aghb".equals(field(view,"query")),"Delete removes one character");
             runOnMainSync(keys::reset);repeat(home,KeyEvent.KEYCODE_DPAD_DOWN,5);key(home,KeyEvent.KEYCODE_DPAD_RIGHT);key(home,KeyEvent.KEYCODE_DPAD_CENTER);
             check("".equals(field(view,"query")),"Clear removes the query");
-            key(home,KeyEvent.KEYCODE_DPAD_LEFT);key(home,KeyEvent.KEYCODE_DPAD_CENTER);repeat(home,KeyEvent.KEYCODE_DPAD_UP,5);key(home,KeyEvent.KEYCODE_DPAD_CENTER);
+            runOnMainSync(keys::reset);repeat(home,KeyEvent.KEYCODE_DPAD_DOWN,5);key(home,KeyEvent.KEYCODE_DPAD_CENTER);repeat(home,KeyEvent.KEYCODE_DPAD_UP,5);key(home,KeyEvent.KEYCODE_DPAD_CENTER);
             check("1".equals(field(view,"query")),"the number page accepts digits");
             repeat(home,KeyEvent.KEYCODE_DPAD_DOWN,5);key(home,KeyEvent.KEYCODE_DPAD_CENTER);repeat(home,KeyEvent.KEYCODE_DPAD_UP,5);key(home,KeyEvent.KEYCODE_DPAD_CENTER);
             check("1a".equals(field(view,"query")),"ABC restores letter entry");
