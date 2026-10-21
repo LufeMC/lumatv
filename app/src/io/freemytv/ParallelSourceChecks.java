@@ -106,8 +106,16 @@ final class ParallelSourceChecks implements AutoCloseable {
     private static boolean supported(androidx.media3.common.Format format, boolean allowExceeds) throws Exception {
         if (androidx.media3.common.MimeTypes.AUDIO_RAW.equals(format.sampleMimeType)) return true;
         for (androidx.media3.exoplayer.mediacodec.MediaCodecInfo decoder : androidx.media3.exoplayer.mediacodec.MediaCodecUtil.getDecoderInfosSoftMatch(
-                androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT, format, false, false))
-            if (allowExceeds ? decoder.isFormatFunctionallySupported(format) : decoder.isFormatSupported(format)) return true;
+                androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT, format, false, false)) {
+            if (!allowExceeds) { if (decoder.isFormatSupported(format)) return true; continue; }
+            if (!decoder.isFormatFunctionallySupported(format)) continue;
+            String mime = format.sampleMimeType == null ? "" : format.sampleMimeType;
+            if (mime.startsWith("video/") && format.width > 0 && format.height > 0
+                    && !decoder.isVideoSizeAndRateSupportedV21(format.width, format.height, format.frameRate)) continue;
+            if (mime.startsWith("audio/") && (format.channelCount > 0 && !decoder.isAudioChannelCountSupportedV21(format.channelCount)
+                    || format.sampleRate > 0 && !decoder.isAudioSampleRateSupportedV21(format.sampleRate))) continue;
+            return true;
+        }
         return false;
     }
     @Override public void close() {

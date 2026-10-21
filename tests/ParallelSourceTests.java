@@ -54,6 +54,15 @@ public class ParallelSourceTests extends TvTest {
             ParallelSourceChecks.Result network = ParallelSourceChecks.inspect(getTargetContext(), https, 0);
             check(network.state == SourceProbe.AVAILABLE, "an HTTPS MP4 passes bounded metadata checks: " + network.reason);
             AtomicInteger running = new AtomicInteger(), peak = new AtomicInteger();
+            if (!CodecSupport.device().avc4k) {
+                File mislabeled = new File(folder, "mislabeled-1080.mkv");
+                try (java.io.InputStream in = getContext().getAssets().open("mislabeled-1080.mkv")) {
+                    java.nio.file.Files.copy(in, mislabeled.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                AddonStreams.Source media = source(android.net.Uri.fromFile(mislabeled).toString()); media.quality = 1080;
+                ParallelSourceChecks.Result result = ParallelSourceChecks.inspectMedia(getTargetContext(), media, 0);
+                check(result.state == SourceProbe.FAILED && result.reason.equals("codec"), "actual unsupported 4K dimensions override an incorrect 1080p label");
+            }
             CountDownLatch started = new CountDownLatch(ParallelSourceChecks.WORKERS), release = new CountDownLatch(1);
             pool = new ParallelSourceChecks((media, expected) -> {
                 int now = running.incrementAndGet(); peak.accumulateAndGet(now, Math::max); started.countDown();

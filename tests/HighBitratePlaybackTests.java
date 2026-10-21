@@ -41,6 +41,8 @@ public class HighBitratePlaybackTests extends TvTest {
             home=(HomeActivity)startActivitySync(new Intent(getTargetContext(),HomeActivity.class).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
             AddonStreams.Source source=new AddonStreams.Source();source.url=android.net.Uri.fromFile(fixture).toString();source.filename="Generated.1080p.x264.24fps.mkv";source.quality=1080;source.addon="Generated fixture";source.videoSize=fixture.length();
             ContinueWatching.Entry entry=new ContinueWatching.Entry();entry.title="High-bitrate playback verification";entry.video="tt0000032";entry.imdb=entry.video;entry.duration=40000;
+            ParallelSourceChecks.Result header = ParallelSourceChecks.inspectMedia(getTargetContext(), source, 40000);
+            if (header.state == SourceProbe.FAILED) throw new AssertionError("Supported high-bitrate dimensions failed metadata checks: " + header.reason); checks++;
             AddonStreams.Source unsupportedAvc=new AddonStreams.Source();unsupportedAvc.url="https://example.invalid/4k-avc.mkv";unsupportedAvc.quality=2160;unsupportedAvc.unsupported=CodecSupport.unsupported("2160p x264",2160);
             AddonStreams.Source unsupportedHevc=new AddonStreams.Source();unsupportedHevc.url="https://example.invalid/4k-hevc.mkv";unsupportedHevc.quality=2160;unsupportedHevc.unsupported=CodecSupport.unsupported("2160p x265",2160);
             if(unsupportedAvc.unsupported==null||unsupportedHevc.unsupported==null)throw new AssertionError("This fixture targets a TV without 4K AVC and HEVC");checks++;

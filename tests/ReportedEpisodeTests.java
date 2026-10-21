@@ -14,6 +14,7 @@ public class ReportedEpisodeTests extends TvTest {
     private String episode = "tt0898266:10:2";
     private int seconds = 60;
     private boolean englishCaptions;
+    private boolean diagnose;
     private void main(Runnable task) {
         Throwable[] failure = {null}; runOnMainSync(() -> { try { task.run(); } catch (Throwable error) { failure[0] = error; } });
         if (failure[0] != null) throw new AssertionError(failure[0]);
@@ -26,6 +27,7 @@ public class ReportedEpisodeTests extends TvTest {
         if (args != null && args.getString("episode", "").matches("tt0898266:[0-9]+:[0-9]+")) episode = args.getString("episode");
         if (args != null) try { seconds = Math.max(15, Math.min(600, Integer.parseInt(args.getString("seconds", "60")))); } catch (NumberFormatException ignored) {}
         englishCaptions = args != null && "en".equals(args.getString("captions"));
+        diagnose = args != null && "true".equals(args.getString("diagnose"));
         if (android.app.Application.getProcessName().equals("io.freemytv:home")) start();
     }
     private void capture(String name) throws Exception {
@@ -34,6 +36,35 @@ public class ReportedEpisodeTests extends TvTest {
         try (java.io.FileOutputStream file = new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null), name))) {
             image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, file);
         } finally { image.recycle(); }
+    }
+    private void codecs(JSONObject report) throws Exception {
+        PlaybackSession session = (PlaybackSession) value("session"); org.json.JSONArray summaries = new org.json.JSONArray();
+        for (String note : session.failureNotes) {
+            if (!note.endsWith("player_error:4003") || summaries.length() >= 3) continue;
+            int index = Integer.parseInt(note.substring(0, note.indexOf(':')));
+            AddonStreams.Source source = session.sources.get(index); JSONObject summary = new JSONObject().put("index", index);
+            try (PreviewReader reader = new PreviewReader(getTargetContext(), source, new PreviewReader.Budget(2L * 1024 * 1024, 128L * 1024 * 1024))) {
+                reader.deadline = SystemClock.elapsedRealtime() + 4500; SourceHeader header = SourceHeader.read(reader);
+                org.json.JSONArray tracks = new org.json.JSONArray(); summary.put("tracks", tracks);
+                for (androidx.media3.common.Format format : header.formats) {
+                    String mime = format.sampleMimeType;
+                    if (mime == null || !mime.startsWith("video/") && !mime.startsWith("audio/")) continue;
+                    JSONObject track = new JSONObject().put("mime", mime).put("codecs", format.codecs).put("width", format.width)
+                            .put("height", format.height).put("rate", format.frameRate).put("channels", format.channelCount).put("sample_rate", format.sampleRate);
+                    org.json.JSONArray decoders = new org.json.JSONArray(); track.put("decoders", decoders); tracks.put(track);
+                    for (androidx.media3.exoplayer.mediacodec.MediaCodecInfo decoder : androidx.media3.exoplayer.mediacodec.MediaCodecUtil.getDecoderInfosSoftMatch(
+                            androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT, format, false, false)) {
+                        JSONObject info = new JSONObject().put("name", decoder.name).put("strict", decoder.isFormatSupported(format))
+                                .put("functional", decoder.isFormatFunctionallySupported(format));
+                        if (mime.startsWith("video/")) info.put("size_rate", decoder.isVideoSizeAndRateSupportedV21(format.width, format.height, format.frameRate));
+                        else info.put("channels", decoder.isAudioChannelCountSupportedV21(format.channelCount)).put("sample_rate", decoder.isAudioSampleRateSupportedV21(format.sampleRate));
+                        decoders.put(info);
+                    }
+                }
+            } catch (Exception error) { summary.put("diagnostic", error.getClass().getSimpleName()); }
+            summaries.put(summary);
+        }
+        report.put("failed_codecs", summaries);
     }
     @Override public void onStart() {
         Bundle output = new Bundle(); JSONObject report = new JSONObject();
@@ -104,6 +135,7 @@ public class ReportedEpisodeTests extends TvTest {
             });
             capture("reported-episode-sustained.png"); report.put("parallel_media_checks", ParallelSourceChecks.peak.get());
             report.put("media_check_results", new JSONObject(ParallelSourceChecks.results));
+            if (diagnose) codecs(report);
             if (englishCaptions && !report.optBoolean("captions_seen")) throw new AssertionError("English captions did not appear during the live sample");
             output.putString("stream", "Passed reported episode playback. " + report + "\n");
         } catch (Throwable error) {
