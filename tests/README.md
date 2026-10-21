@@ -73,3 +73,17 @@ adb -s "$TV_SERIAL" shell am start -a android.intent.action.MAIN -c android.inte
 Check the enabled remote-control service after instrumentation.
 Preserve its existing approval and other enabled services.
 Keep test records and household screenshots outside the public repository.
+
+## Remote letter grid and title removal
+
+Run these checks on the authorized test TV before another TV receives the update:
+
+```sh
+python3 tools/test-device.py --serial "$TV_SERIAL" --timeout 150 --output ../../outputs/device-tests.jsonl WatchingRemovalTests KeyboardGridTests SearchAccessTests ContinueUiTests NewEpisodeTests ProgressDataTests PhoneLinkTests
+```
+
+The removal test uses isolated movie, series, and imported-library entries.
+It checks persistent removal, same-name content types, account preservation, and deliberate playback after removal.
+The grid test checks vertical typing, numbers, Space, Delete, Clear, query replacement, and suggestion navigation.
+It captures Home, standalone Search, and Portuguese utility labels.
+The Home launch uses an activity monitor to observe the currently visible instance.

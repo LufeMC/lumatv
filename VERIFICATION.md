@@ -392,3 +392,53 @@ The existing TMDB configuration was saved through the authenticated phone setup 
 That page confirmed the key, San Francisco, the US region, and Celsius.
 The native Settings screen confirmed Always night and the active LumaTV Home mode.
 Active playback tests remained on TV2.
+
+## Remote letter grid and watching removal
+
+The application source for version 1.1.50 is `f17fe21`.
+Its APK SHA-256 is `e684eb3436252269ea0ef00ad402aff797128faa05458001ce088f11b2a0afd3`.
+The original signing certificate remains unchanged.
+This update changes Home and Search controls without changing the playback engine.
+
+Search uses a six-column letter grid beside the results.
+The grid includes numbers, Space, Delete, Clear, and voice input when available.
+Right from its edge selects suggestions.
+Left from the first suggestion returns to typing.
+The standalone Search screen uses four poster columns within the available width.
+Utility keys retain localized accessible names and visible focus.
+Cached key and recent-query labels avoid repeated text preparation during drawing.
+
+Holding OK on a watching card opens its actions.
+The menu now includes Remove from Continue Watching.
+Waiting-series cards provide Remove from Your series.
+A visible hint explains the held-OK action.
+Removal hides older local, Stremio, and service copies of the same content type.
+It preserves the connected account library and watched history.
+New deliberate playback can return the title to Continue Watching.
+A pending Home refresh cannot restore an earlier copy after removal.
+
+TV2 passed 25 removal checks and 24 keyboard checks.
+Native screenshots cover the Home grid, standalone grid, Portuguese labels, and removal menu.
+The keyboard test uses Android input injection for native focus navigation.
+The Home tests observe the current activity through an activity monitor.
+These test changes avoid bypassing Android focus processing or waiting on an obsolete Home instance.
+The user requires explicit approval before Hisense receives this update.
+Hisense remains on version 1.1.47.
+
+The related checks also passed on version 1.1.50: Search access, Continue Watching navigation,
+episode notices, progress data, and authenticated phone input.
+The respective suites passed 11, 12, 33, 28, and 11 checks.
+The test records retain earlier failed attempts and their corrected results.
+A later visual review moved the phone typing card below the keyboard.
+This prevents the card from covering empty-search recommendations.
+
+Version 1.1.51 uses application source `6f4189f`.
+Its APK SHA-256 is `b2ab6c52cd3bfb8bd0803231732ca33ee3cf456f6f52a644d533a7c22dba8fc8`.
+The final grid passed 24 checks.
+Search access and phone input each passed 11 checks on that build.
+The repeated Search access test now observes the currently visible Home instance.
+Android created multiple Home instances during the earlier failed run.
+The corrected test verified background image release and restoration.
+No application change was necessary for that test correction.
+The original signing certificate remains unchanged.
+Hisense installation remains subject to the user's explicit approval.

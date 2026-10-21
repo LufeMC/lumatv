@@ -25,7 +25,8 @@ public class SearchAccessTests extends TvTest {
         Bundle result=new Bundle();
         try {
             getUiAutomation(); home=startActivitySync(new Intent(getTargetContext(),HomeActivity.class).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
-            view=(HomeView)field(home,"home");SystemClock.sleep(5000);
+            SystemClock.sleep(5000);
+            runOnMainSync(()->{try{HomeActivity visible=HomeActivity.visible.get();if(visible==null)throw new AssertionError("Home is not visible");home=visible;view=(HomeView)field(home,"home");}catch(Exception e){throw new RuntimeException(e);}});
             check(pill(),"Search has default home focus");
             key(home,KeyEvent.KEYCODE_DPAD_CENTER);
             check((Integer)field(view,"mode")==2 && (Integer)field(view,"zone")==HomeView.Z_KEYS,"one OK opens the home keyboard");
@@ -51,7 +52,10 @@ public class SearchAccessTests extends TvTest {
             key(search,KeyEvent.KEYCODE_DPAD_CENTER);check(query.getText().toString().equals("a"),"typing replaces the selected query");
             runOnMainSync(()->search.finish());search=null;
             long end=SystemClock.elapsedRealtime()+5000;
-            while(field(view,"land")==null&&SystemClock.elapsedRealtime()<end)SystemClock.sleep(50);
+            while(SystemClock.elapsedRealtime()<end){
+                runOnMainSync(()->{try{HomeActivity visible=HomeActivity.visible.get();if(visible!=null){home=visible;view=(HomeView)field(home,"home");}}catch(Exception e){throw new RuntimeException(e);}});
+                if(field(view,"land")!=null)break;SystemClock.sleep(50);
+            }
             check(field(view,"land")!=null,"home restores its landscape after Back");
             result.putString("stream","Passed "+checks+" Search access checks.\n");
         } catch(Throwable e){result.putString("stream","FAILED after "+checks+": "+e.getMessage()+"\n");}

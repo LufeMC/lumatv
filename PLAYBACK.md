@@ -12,7 +12,12 @@ It preserves the editable app row and the original home screen controls.
 5. Select an episode or select Play.
 
 Search has the initial home focus.
-Search opens with the keyboard ready.
+Search opens with a six-column letter grid ready.
+Arrow keys move between adjacent keys.
+Space, Delete, Clear, numbers, and voice input are available on the grid.
+Right from the grid edge selects the suggestions.
+Left from the first suggestion returns to the grid.
+The standalone Search screen shows four poster columns beside the grid.
 Back from a watch card or app tile returns focus to Search.
 The remote Search key also works on the application's search, title, player, app editor, and settings screens.
 Suggestions update while you type.
@@ -43,6 +48,15 @@ Other services must share their entries with Android.
 Netflix entries were available on the second TV during testing.
 Prime Video did not provide an entry during that check.
 The application does not read another application's private database.
+
+To remove a title, select its Resume card or Continue Watching card.
+Hold OK to open its actions.
+Select Remove from Continue Watching.
+For a waiting series, select Remove from Your series.
+The application hides older imported copies of that title.
+It keeps the connected account library and watched-episode history.
+A movie and series with the same name remain separate.
+If you deliberately resume the title later, new playback can return it to Continue Watching.
 Service cards open their corresponding applications.
 Stremio library cards resume internal playback for the saved episode and position.
 
