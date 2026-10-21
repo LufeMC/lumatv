@@ -56,4 +56,10 @@ final class SeriesEpisodes {
         return result;
     }
     static String today() { return new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(new java.util.Date()); }
+    static boolean future(String released, String today, long now) {
+        try { return java.time.Instant.parse(released).toEpochMilli() > now; }
+        catch (RuntimeException invalid) {
+            return released != null && released.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}") && released.compareTo(today) > 0;
+        }
+    }
 }

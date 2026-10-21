@@ -17,7 +17,7 @@ final class SeekPreview extends LinearLayout {
     private final TextView time, state;
     private final LruCache<Long, Bitmap> frames = new LruCache<>(32);
     private long selected, selectedPosition;
-    long drawnPosition = -1, drawnAt;
+    long drawnPosition = -1, drawnAt, selectedAt;
     SeekPreview(Context context) {
         super(context); setOrientation(VERTICAL); setGravity(Gravity.CENTER_HORIZONTAL);
         time = PlayerViews.text(context, "", 44, Look.INK, Ui.semibold); time.setFontFeatureSettings("'tnum'");
@@ -53,7 +53,7 @@ final class SeekPreview extends LinearLayout {
         row.addView(image, size); return image;
     }
     boolean select(long position) {
-        drawnPosition = -1; return show(position);
+        selectedAt = android.os.SystemClock.elapsedRealtime(); drawnPosition = -1; return show(position);
     }
     private boolean show(long position) {
         selectedPosition = position; selected = key(position); time.setText(clock(position));

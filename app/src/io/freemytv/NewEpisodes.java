@@ -17,6 +17,7 @@ final class NewEpisodes {
     static final class Notice {
         ContinueWatching.Entry entry;
         long released;
+        boolean waiting;
         String key() { return entry.video; }
     }
 
@@ -37,19 +38,26 @@ final class NewEpisodes {
         for (JSONObject item : saved) {
             String id = item.optString("_id"); JSONObject state = item.optJSONObject("state");
             if (!"series".equals(item.optString("type")) || !id.matches("tt[0-9]+")) continue;
-            if (item.optBoolean("noNotif") || state != null && state.optBoolean("noNotif")) { shows.remove(id); continue; }
-            if (item.optBoolean("removed") || item.optBoolean("temp") || shows.containsKey(id)) continue;
+            if (item.optBoolean("removed") && !item.optBoolean("temp")) continue;
             ContinueWatching.Entry e = new ContinueWatching.Entry(); e.imdb = id; e.kind = "tv"; e.title = item.optString("name");
             e.art = item.isNull("poster") ? "" : item.optString("poster");
             if (state != null) {
                 e.video = state.optString("video_id"); e.position = state.optLong("timeOffset");
                 e.completed = state.optInt("flaggedWatched") > 0;
+                try { e.updated = java.time.Instant.parse(state.optString("lastWatched")).toEpochMilli(); } catch (RuntimeException ignored) {}
                 String[] parts = e.video.split(":");
                 if (parts.length == 3) try { e.season = Integer.parseInt(parts[1]); e.episode = Integer.parseInt(parts[2]); } catch (NumberFormatException ignored) {}
             }
-            if (!e.title.isEmpty()) shows.put(id, e);
+            ContinueWatching.Entry existing = shows.get(id);
+            if (existing == null && (item.optBoolean("removed") || item.optBoolean("temp"))) continue;
+            if (!e.title.isEmpty() && (existing == null || e.episode > 0 && e.updated > existing.updated)) {
+                if (existing != null) { e.tmdb = existing.tmdb; if (e.art.isEmpty()) e.art = existing.art; }
+                shows.put(id, e);
+            }
         }
-        return new ArrayList<>(shows.values()).subList(0, Math.min(40, shows.size()));
+        List<ContinueWatching.Entry> ordered = new ArrayList<>(shows.values());
+        ordered.sort((a, b) -> Long.compare(b.updated, a.updated));
+        return ordered.subList(0, Math.min(40, ordered.size()));
     }
 
     static JSONArray releases(String imdb, JSONArray videos, long now) {
@@ -73,10 +81,16 @@ final class NewEpisodes {
     static List<Notice> cached(Context context, List<ContinueWatching.Entry> shows, long now) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, 0);
         Set<String> dismissed = prefs.getStringSet("dismissed", Collections.emptySet());
+        JSONObject library = LibrarySync.items(context);
         List<Notice> result = new ArrayList<>();
         for (ContinueWatching.Entry show : shows) try {
+            JSONObject item = library.optJSONObject(show.imdb), state = item == null ? null : item.optJSONObject("state");
+            if (item != null && (item.optBoolean("noNotif") || state != null && state.optBoolean("noNotif"))) continue;
             Set<String> watched = ContinueWatching.watched(context, show.imdb);
             JSONArray episodes = new JSONArray(prefs.getString("episodes:" + show.imdb, "[]"));
+            JSONObject schedule = new JSONObject(prefs.getString("timeline:" + show.imdb, "{}"));
+            JSONObject scheduled = schedule.optJSONObject("next");
+            if (scheduled != null && scheduled.optLong("released") <= now) episodes.put(scheduled);
             for (int i = 0; i < episodes.length(); i++) {
                 JSONObject v = episodes.getJSONObject(i); long released = v.optLong("released");
                 int season = v.optInt("season"), episode = v.optInt("episode"); String id = v.optString("id");
@@ -92,6 +106,50 @@ final class NewEpisodes {
             }
         } catch (Exception ignored) {}
         result.sort((a, b) -> Long.compare(b.released, a.released));
+        return result.subList(0, Math.min(6, result.size()));
+    }
+
+    static JSONObject timeline(String imdb, JSONObject metadata, long now) throws JSONException {
+        JSONObject latest = null, next = null; JSONArray videos = metadata.optJSONArray("videos");
+        for (int i = 0; videos != null && i < videos.length(); i++) {
+            JSONObject v = videos.optJSONObject(i); if (v == null) continue;
+            int season = v.optInt("season"), episode = v.optInt("episode"); long released;
+            if (season < 1 || episode < 1 || !v.optString("id").equals(imdb + ":" + season + ":" + episode)) continue;
+            try { released = java.time.Instant.parse(v.optString("released")).toEpochMilli(); }
+            catch (RuntimeException invalid) { continue; }
+            JSONObject e = new JSONObject().put("id", v.optString("id")).put("season", season).put("episode", episode).put("released", released);
+            if (released <= now && (latest == null || order(e, latest) > 0)) latest = e;
+            if (released > now && (next == null || order(e, next) < 0)) next = e;
+        }
+        String status = metadata.optString("status");
+        return new JSONObject().put("latest", latest).put("next", next)
+                .put("ended", status.equalsIgnoreCase("Ended") || status.equalsIgnoreCase("Canceled") || status.equalsIgnoreCase("Cancelled"));
+    }
+    private static int order(JSONObject a, JSONObject b) {
+        int season = Integer.compare(a.optInt("season"), b.optInt("season"));
+        return season == 0 ? Integer.compare(a.optInt("episode"), b.optInt("episode")) : season;
+    }
+    static List<Notice> waiting(Context context, List<ContinueWatching.Entry> shows, long now) {
+        List<Notice> result = new ArrayList<>(); SharedPreferences prefs = context.getSharedPreferences(PREFS, 0);
+        for (ContinueWatching.Entry show : shows) try {
+            JSONObject schedule = new JSONObject(prefs.getString("timeline:" + show.imdb, "{}"));
+            JSONObject latest = schedule.optJSONObject("latest"), next = schedule.optJSONObject("next");
+            if (schedule.optBoolean("ended") && next == null || latest == null || show.episode <= 0) continue;
+            int season = latest.optInt("season"), episode = latest.optInt("episode");
+            if (show.season < season || show.season == season && show.episode < episode) continue;
+            boolean watched = show.completed || ContinueWatching.finished(show.position, show.duration)
+                    || ContinueWatching.watched(context, show.imdb).contains(show.season + ":" + show.episode);
+            if (!watched && !show.upNext) continue;
+            if (next != null && next.optLong("released") <= now) continue;
+            Notice notice = new Notice(); notice.waiting = true; notice.entry = ContinueWatching.Entry.parse(show.json());
+            if (next != null) {
+                notice.entry.video = next.optString("id"); notice.entry.season = next.optInt("season"); notice.entry.episode = next.optInt("episode");
+                notice.released = next.optLong("released");
+            }
+            notice.entry.position = notice.entry.duration = 0;
+            notice.entry.pkg = notice.entry.intent = ""; notice.entry.provider = "";
+            result.add(notice);
+        } catch (Exception ignored) {}
         return result.subList(0, Math.min(6, result.size()));
     }
 
@@ -117,7 +175,9 @@ final class NewEpisodes {
                         JSONObject meta = MediaHttp.json("https://v3-cinemeta.strem.io/meta/series/" + show.imdb + ".json", null, 3500).optJSONObject("meta");
                         if (meta == null) throw new Exception("metadata");
                         JSONArray list = releases(show.imdb, meta.optJSONArray("videos"), now);
-                        prefs.edit().putString("episodes:" + show.imdb, list.toString()).putLong("checked:" + show.imdb, now).apply();
+                        prefs.edit().putString("episodes:" + show.imdb, list.toString())
+                                .putString("timeline:" + show.imdb, timeline(show.imdb, meta, now).toString())
+                                .putLong("checked:" + show.imdb, now).apply();
                         changed.run();
                     } catch (Exception ignored) {
                         prefs.edit().putLong("checked:" + show.imdb, now - REFRESH + 10 * 60000L).apply();
@@ -125,7 +185,7 @@ final class NewEpisodes {
                 }
                 Set<String> keep = new HashSet<>(); for (ContinueWatching.Entry show : shows) keep.add(show.imdb);
                 SharedPreferences.Editor edit = prefs.edit();
-                for (String key : prefs.getAll().keySet()) if ((key.startsWith("checked:") || key.startsWith("episodes:")) && !keep.contains(key.substring(key.indexOf(':') + 1))) edit.remove(key);
+                for (String key : prefs.getAll().keySet()) if ((key.startsWith("checked:") || key.startsWith("episodes:") || key.startsWith("timeline:")) && !keep.contains(key.substring(key.indexOf(':') + 1))) edit.remove(key);
                 edit.apply();
             } finally { busy.set(false); }
         });

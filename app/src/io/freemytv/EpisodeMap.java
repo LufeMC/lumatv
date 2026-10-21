@@ -41,7 +41,7 @@ final class EpisodeMap {
             e.overview = o.optString("overview", ""); e.still = o.optString("thumbnail", "");
             if (!MediaHttp.https(e.still)) e.still = "";
             String released = o.optString("released", ""); e.date = released.length() >= 10 ? released.substring(0,10) : "";
-            e.future = e.date.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}") && e.date.compareTo(today) > 0;
+            e.future = SeriesEpisodes.future(released, today, System.currentTimeMillis());
             SeriesEpisodes.Episode match = null; int matches = 0;
             for (SeriesEpisodes.Episode t : fallback) if (normalized(t.name).equals(normalized(e.name)) && matchingDate(t.date, e.date)) {
                 match = t; matches++;

@@ -78,7 +78,8 @@ public class PreparedPreviewTests extends TvTest {
                     .put("cpu_ms", android.os.Process.getElapsedCpuTime() - cpu).put("min_available_memory_bytes", minMemory[0])
                     .put("dropped_frames", droppedAfter[0] - droppedBefore[0]).put("readiness", readiness);
             if (position[0] - original[0] < 55000) throw new AssertionError("Playback lost more than five seconds during preparation");
-            JSONArray samples = new JSONArray(); report.put("remote_to_draw_ms", samples);
+            JSONArray samples = new JSONArray(), selectedSamples = new JSONArray(), deliverySamples = new JSONArray();
+            report.put("remote_to_draw_ms", samples).put("selected_to_draw_ms", selectedSamples).put("input_delivery_ms", deliverySamples);
             for (int code : new int[]{KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_LEFT}) {
                 SystemClock.sleep(200);
                 long[] target = {0}; main(() -> { try {
@@ -88,7 +89,9 @@ public class PreparedPreviewTests extends TvTest {
                 } catch (Exception error) { throw new RuntimeException(error); } });
                 long pressed = SystemClock.elapsedRealtime(); key(code);
                 await(() -> scrub().active && preview().drawnPosition == SeekPreview.bucket(scrub().target) && preview().drawnAt >= pressed, 1000, "prepared preview is drawn");
-                long[] drawn = {0}; main(() -> { try { drawn[0] = preview().drawnAt; if ((Boolean) value("previewMovedPlayer")) throw new AssertionError("Preview moved the playback decoder"); } catch (Exception error) { throw new RuntimeException(error); } });
+                long[] drawn = {0}; main(() -> { try { drawn[0] = preview().drawnAt; selectedSamples.put(drawn[0] - preview().selectedAt);
+                    deliverySamples.put(activity.seekInputAt - pressed);
+                    if ((Boolean) value("previewMovedPlayer")) throw new AssertionError("Preview moved the playback decoder"); } catch (Exception error) { throw new RuntimeException(error); } });
                 long elapsed = drawn[0] - pressed; samples.put(elapsed);
             }
             long[] canceledPosition = {0}; main(() -> { try { canceledPosition[0] = scrub().original; } catch (Exception error) { throw new RuntimeException(error); } });

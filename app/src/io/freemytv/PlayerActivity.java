@@ -81,6 +81,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
     private boolean activityVisible;
     private SeriesEpisodes.Episode nextEpisode;
     private boolean nextLoaded, playbackEnded, autoNextCancelled, advancingEpisode, videoRendered, audioAdvancing;
+    long seekInputAt;
     private boolean creditsHandled, finishedRecorded, nextPrefetched, upNextShown, stillShown, stillPaused;
     private long nextAt, stillUntil;
     private final Runnable advanceEpisode = () -> {
@@ -1612,6 +1613,8 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
         boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+        if (down && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT
+                || key == KeyEvent.KEYCODE_MEDIA_REWIND || key == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)) seekInputAt = SystemClock.elapsedRealtime();
         if (event.getAction() == KeyEvent.ACTION_UP && key == swallowedKey) { swallowedKey = 0; return true; }
         if (down && event.getRepeatCount() == 0 && PlaybackMemory.autoplayChain(this) > 0 && !stillShown) PlaybackMemory.setAutoplayChain(this, 0);
         // Long press of the settings or menu button: quick settings.

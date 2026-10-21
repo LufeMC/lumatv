@@ -55,7 +55,7 @@ public class NewEpisodeTests extends TvTest {
             LibrarySync.store(getTargetContext(), new JSONArray());
             getTargetContext().getSharedPreferences(ContinueWatching.PREFS, 0).edit().clear().putBoolean("migrated", true).putLong("cloud-at", now).commit();
             getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().clear().commit();
-            ContinueWatching.Entry show = new ContinueWatching.Entry(); show.kind = "tv"; show.title = "The Big Bang Theory";
+            ContinueWatching.Entry show = new ContinueWatching.Entry(); show.kind = "tv"; show.title = "Episode notice test";
             show.imdb = "tt0898266"; show.video = "tt0898266:10:1"; show.season = 10; show.episode = 1; show.tmdb = 1418;
             JSONArray videos = new JSONArray().put(episode(2, now - 60000)).put(episode(3, now + 60000))
                     .put(episode(4, now - NewEpisodes.WINDOW - 1)).put(episode(2, now - 60000));
@@ -78,14 +78,49 @@ public class NewEpisodeTests extends TvTest {
             check(NewEpisodes.cached(getTargetContext(), Collections.singletonList(show), now).isEmpty(), "dismissed notices remain hidden");
             JSONObject item = LibrarySync.item(show.imdb, "tv", show.title, "", true); item.put("noNotif", true);
             LibrarySync.store(getTargetContext(), new JSONArray().put(item));
-            check(NewEpisodes.followed(getTargetContext(), Collections.singletonList(show)).isEmpty(), "the Stremio notification preference is preserved");
+            check(NewEpisodes.cached(getTargetContext(), NewEpisodes.followed(getTargetContext(), Collections.singletonList(show)), now).isEmpty(), "the Stremio notification preference is preserved");
             LibrarySync.store(getTargetContext(), new JSONArray());
             getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().remove("dismissed").commit();
+            JSONObject metadata = new JSONObject().put("status", "Returning Series").put("videos", new JSONArray()
+                    .put(episode(1, now - 200000)).put(episode(2, now - 60000)).put(episode(3, now + 60000)));
+            JSONObject timeline = NewEpisodes.timeline(show.imdb, metadata, now);
+            getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().putString("timeline:" + show.imdb, timeline.toString()).commit();
+            show.episode = 2; show.video = "tt0898266:10:2"; show.completed = true;
+            List<NewEpisodes.Notice> waiting = NewEpisodes.waiting(getTargetContext(), Collections.singletonList(show), now);
+            check(waiting.size() == 1 && waiting.get(0).entry.video.equals("tt0898266:10:3"), "finishing the latest released episode keeps the series with its next release");
+            check(NewEpisodes.waiting(getTargetContext(), Collections.singletonList(show), now + 120000).isEmpty(), "a released episode replaces the waiting state");
+            notices = NewEpisodes.cached(getTargetContext(), Collections.singletonList(show), now + 120000);
+            check(notices.size() == 1 && notices.get(0).entry.video.equals("tt0898266:10:3"), "the scheduled episode becomes a notice without waiting for another metadata request");
+            metadata.put("status", "Ended"); metadata.getJSONArray("videos").remove(2);
+            getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().putString("timeline:" + show.imdb, NewEpisodes.timeline(show.imdb, metadata, now).toString()).commit();
+            check(NewEpisodes.waiting(getTargetContext(), Collections.singletonList(show), now).isEmpty(), "a confirmed series ending does not create a waiting card");
+            metadata.put("status", "Returning Series");
+            getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().putString("timeline:" + show.imdb, NewEpisodes.timeline(show.imdb, metadata, now).toString()).commit();
+            check(NewEpisodes.waiting(getTargetContext(), Collections.singletonList(show), now).size() == 1, "an ongoing series remains visible when the next date is unknown");
+            item = LibrarySync.item(show.imdb, "tv", show.title, "", true);
+            item.getJSONObject("state").put("video_id", show.video).put("flaggedWatched", 1).put("timeOffset", 0).put("lastWatched", java.time.Instant.ofEpochMilli(now).toString());
+            LibrarySync.store(getTargetContext(), new JSONArray().put(item));
+            List<ContinueWatching.Entry> imported = NewEpisodes.followed(getTargetContext(), Collections.emptyList());
+            check(imported.size() == 1 && imported.get(0).completed, "the full Stremio library retains a finished episode with zero resume offset");
+            check(NewEpisodes.waiting(getTargetContext(), imported, now).size() == 1, "the imported series remains on Home while waiting");
+            LibrarySync.store(getTargetContext(), new JSONArray());
+            getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().remove("timeline:" + show.imdb).commit();
+            show.episode = 1; show.video = "tt0898266:10:1"; show.completed = false;
             ContinueWatching.record(getTargetContext(), show, 90000, 1200000, false);
-            home = (HomeActivity) startActivitySync(new Intent(getTargetContext(), HomeActivity.class).setAction(Intent.ACTION_MAIN)
+            ActivityMonitor started = addMonitor(HomeActivity.class.getName(), null, false);
+            getTargetContext().startActivity(new Intent(getTargetContext(), HomeActivity.class).setAction(Intent.ACTION_MAIN)
                     .addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            home = (HomeActivity) waitForMonitorWithTimeout(started, 20000); removeMonitor(started);
+            if (home == null) throw new AssertionError("Home did not open");
             view = (HomeView) value(home, "home");
-            await(() -> ((List<?>) value(view, "episodeNotices")).size() == 1, "Home loads the cached notice without a network request");
+            await(() -> {
+                HomeActivity visible = HomeActivity.visible.get();
+                if (visible == null) return false;
+                home = visible; view = (HomeView) value(home, "home");
+                for (Object itemNotice : (List<?>) value(view, "episodeNotices"))
+                    if (((NewEpisodes.Notice) itemNotice).entry.video.equals("tt0898266:10:2")) return true;
+                return false;
+            }, "Home loads the cached notice without a network request");
             SystemClock.sleep(4000); key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN);
             await(() -> view.zone == HomeView.Z_NEWS, "two Down presses select the notice below Resume");
             capture("new-episode-home.png"); addMonitor(monitor); key(KeyEvent.KEYCODE_DPAD_CENTER);

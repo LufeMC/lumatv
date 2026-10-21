@@ -19,6 +19,10 @@ public class EpisodeDataTests extends TvTest {
         Bundle result = new Bundle();
         try {
             Ui.init(getTargetContext());
+            long releaseAt = java.time.Instant.parse("2026-10-21T01:00:00Z").toEpochMilli();
+            check(SeriesEpisodes.future("2026-10-21T01:00:00Z", "2026-10-20", releaseAt - 1), "a timestamp remains unavailable before its release time");
+            check(!SeriesEpisodes.future("2026-10-21T01:00:00Z", "2026-10-20", releaseAt), "a UTC date difference does not delay a released episode locally");
+            check(SeriesEpisodes.future("2026-10-21", "2026-10-20", releaseAt), "date-only metadata preserves the calendar-date rule");
             ContinueWatching.Entry current = new ContinueWatching.Entry(); current.tmdb = 123; current.kind = "tv"; current.season = 1; current.episode = 1;
             JSONObject same = season(3, "2020-01-01");
             same.getJSONArray("episodes").put(new JSONObject().put("episode_number", 2).put("air_date", "2020-01-01"));
