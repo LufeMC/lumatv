@@ -82,14 +82,16 @@ public class SearchActivity extends TvActivity {
         ScrollView scroll = new ScrollView(this); scroll.setClipChildren(false); scroll.setClipToPadding(false); scroll.setVerticalScrollBarEnabled(false);
         content = column(); content.setClipChildren(false); content.setPadding(0, px(20), 0, px(64)); scroll.addView(content);
         results.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
-        LinearLayout phonePanel = column(); phonePanel.setPadding(px(36), px(36), px(36), px(36));
+        LinearLayout phonePanel = new LinearLayout(this); phonePanel.setGravity(Gravity.CENTER_VERTICAL);
+        phonePanel.setPadding(px(18), px(18), px(18), px(18));
         phonePanel.setBackground(PlayerViews.glass(this, 32));
-        TextView phoneHeading = text(Ui.tr("Digite pelo telefone", "Type on your phone"), 30); phoneHeading.setTypeface(Ui.semibold); phonePanel.addView(phoneHeading);
-        TextView phoneHint = text(Ui.tr("Escaneie com a câmera.\nO texto aparece aqui.", "Scan with your camera.\nYour text appears here."), 22);
-        phoneHint.setTextColor(Look.INK_2); phoneHint.setLineSpacing(0, 1.3f); phonePanel.addView(phoneHint, gap(-1, -2, 8));
-        phone = new ImageView(this); phone.setBackground(Look.round(this, 0xFFE9E6DF, 20)); phone.setPadding(px(26), px(26), px(26), px(26));
-        phone.setContentDescription(Ui.tr("Código para buscar pelo telefone", "Code for phone search")); phonePanel.addView(phone, gap(px(328), px(328), 25));
-        FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(px(400), -2, Gravity.TOP | Gravity.END); pp.topMargin = px(20); results.addView(phonePanel, pp); phoneCard = phonePanel;
+        phone = new ImageView(this); phone.setBackground(Look.round(this, 0xFFE9E6DF, 16)); phone.setPadding(px(14), px(14), px(14), px(14));
+        phone.setContentDescription(Ui.tr("Código para buscar pelo telefone", "Code for phone search")); phonePanel.addView(phone, new LinearLayout.LayoutParams(px(164), px(164)));
+        LinearLayout phoneWords = column(); LinearLayout.LayoutParams pw = new LinearLayout.LayoutParams(0, -2, 1); pw.leftMargin = px(20); phonePanel.addView(phoneWords, pw);
+        TextView phoneHeading = text(Ui.tr("Digite pelo telefone", "Type on your phone"), 24); phoneHeading.setTypeface(Ui.semibold); phoneWords.addView(phoneHeading);
+        TextView phoneHint = text(Ui.tr("Escaneie com a câmera.\nO texto aparece aqui.", "Scan with your camera.\nYour text appears here."), 20);
+        phoneHint.setTextColor(Look.INK_2); phoneHint.setLineSpacing(0, 1.3f); phoneWords.addView(phoneHint, gap(-1, -2, 8));
+        root.addView(phonePanel, at(480, 200, 96, 744, 0)); phoneCard = phonePanel;
         FrameLayout.LayoutParams rp = at(-1, -1, 672, 208, 96); root.addView(results, rp);
         setContentView(root);
         query.addTextChangedListener(new TextWatcher() {

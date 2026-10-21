@@ -24,7 +24,11 @@ public class KeyboardGridTests extends TvTest {
             if(error[0]!=null)throw new AssertionError(label,error[0]);if(ok[0]){checks++;return;}SystemClock.sleep(100); }
         throw new AssertionError(label);
     }
-    private void key(Activity a,int code) { runOnMainSync(()->{long t=SystemClock.uptimeMillis();a.dispatchKeyEvent(new KeyEvent(t,t,0,code,0));a.dispatchKeyEvent(new KeyEvent(t,t,1,code,0));});SystemClock.sleep(80); }
+    private void key(Activity a,int code) {
+        if(a==search && code!=KeyEvent.KEYCODE_SEARCH) sendKeyDownUpSync(code);
+        else runOnMainSync(()->{long t=SystemClock.uptimeMillis();a.dispatchKeyEvent(new KeyEvent(t,t,0,code,0));a.dispatchKeyEvent(new KeyEvent(t,t,1,code,0));});
+        SystemClock.sleep(80);
+    }
     private void repeat(Activity a,int code,int n) { for(int i=0;i<n;i++)key(a,code); }
     private void shot(String name) throws Exception {
         SystemClock.sleep(600);android.graphics.Bitmap b=getUiAutomation().takeScreenshot();
@@ -36,8 +40,12 @@ public class KeyboardGridTests extends TvTest {
         Bundle result=new Bundle();
         try {
             getUiAutomation();Ui.init(getTargetContext());
-            home=startActivitySync(new Intent(getTargetContext(),HomeActivity.class).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
-            view=(HomeView)field(home,"home");SystemClock.sleep(5000);key(home,KeyEvent.KEYCODE_SEARCH);
+            ActivityMonitor started=addMonitor(HomeActivity.class.getName(),null,false);
+            getTargetContext().startActivity(new Intent(getTargetContext(),HomeActivity.class).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            home=waitForMonitorWithTimeout(started,20000);removeMonitor(started);
+            if(home==null)throw new AssertionError("Home did not open");
+            await(()->{HomeActivity visible=HomeActivity.visible.get();if(visible==null)return false;home=visible;view=(HomeView)field(home,"home");return true;},"the current Home activity is visible");
+            SystemClock.sleep(5000);key(home,KeyEvent.KEYCODE_SEARCH);
             check(view.zone==HomeView.Z_KEYS,"Search starts on the letter grid");
             KeyRow keys=(KeyRow)field(view,"keys");
             check(keys.getHeight()>keys.getWidth()*.9 && keys.getWidth()<view.getWidth()/3,"the keyboard has a compact grid layout");
@@ -71,7 +79,7 @@ public class KeyboardGridTests extends TvTest {
             repeat(search,KeyEvent.KEYCODE_DPAD_DOWN,4);repeat(search,KeyEvent.KEYCODE_DPAD_RIGHT,3);key(search,KeyEvent.KEYCODE_DPAD_CENTER);
             check("ac".equals(edit.getText().toString()),"Delete removes selected text without removing the ending");
             runOnMainSync(()->{edit.setText("brooklyn");nativeKeys.reset();});
-            await(()->!((List<?>)field(search,"titles")).isEmpty(),"standalone suggestions remain available");shot("keyboard-search-grid.png");
+            await(()->((View)field(search,"content")).findViewWithTag("tv:48891")!=null,"the correct standalone suggestion is rendered");shot("keyboard-search-grid.png");
             repeat(search,KeyEvent.KEYCODE_DPAD_RIGHT,6);
             await(()->!nativeKeys.hasFocus() && ((View)field(search,"content")).hasFocus(),"Right selects a standalone suggestion");
             key(search,KeyEvent.KEYCODE_DPAD_LEFT);await(nativeKeys::hasFocus,"Left returns from a suggestion to the keyboard");

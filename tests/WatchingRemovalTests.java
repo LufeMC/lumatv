@@ -46,7 +46,11 @@ public class WatchingRemovalTests extends TvTest {
             LibrarySync.store(getTargetContext(),new JSONArray().put(libraryItem));String libraryBefore=LibrarySync.items(getTargetContext()).toString();
             ContinueWatching.Entry copy=ContinueWatching.Entry.parse(series.json());copy.updated=System.currentTimeMillis()-60000;
             getTargetContext().getSharedPreferences(ContinueWatching.PREFS,0).edit().putString("stremio",new JSONArray().put(copy.json()).toString()).commit();
-            home=startActivitySync(new Intent(getTargetContext(),HomeActivity.class).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));view=(HomeView)field(home,"home");SystemClock.sleep(5000);
+            ActivityMonitor started=addMonitor(HomeActivity.class.getName(),null,false);
+            getTargetContext().startActivity(new Intent(getTargetContext(),HomeActivity.class).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+            home=waitForMonitorWithTimeout(started,20000);removeMonitor(started);
+            if(home==null)throw new AssertionError("Home did not open");
+            await(()->{HomeActivity visible=HomeActivity.visible.get();if(visible==null)return false;home=visible;view=(HomeView)field(home,"home");return true;},"the current Home activity is visible");SystemClock.sleep(5000);
             await(()->has(series.imdb)&&has(movie.imdb),"movie and series are visible before removal");key(KeyEvent.KEYCODE_DPAD_DOWN);
             check(view.zone==HomeView.Z_CHIP,"Down selects the Resume card");check(view.getContentDescription().toString().contains("Hold OK"),"Resume explains how to open its actions");
             removeMenu("Remove from Continue Watching");await(()->!has(series.imdb),"removing Resume also removes the series card");check(has(movie.imdb),"removing a series preserves the other movie");
