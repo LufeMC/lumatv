@@ -162,6 +162,10 @@ public class NewEpisodeTests extends TvTest {
                 Object card = ((List<?>) value(view, "row")).get((Integer) value(view, "rowIndex"));
                 return "Waiting for the next episode".equals(value(card, "kicker")) && ((String) value(card, "meta")).startsWith("Next episode:");
             }, "the retained card explains the waiting state and next release date");
+            key(KeyEvent.KEYCODE_DPAD_UP);
+            await(() -> view.zone == HomeView.Z_HERO, "Up selects the waiting series action");
+            key(KeyEvent.KEYCODE_DPAD_RIGHT);
+            check(((Integer) value(view, "heroIndex")) == 0, "a repeated action cannot receive a second focus");
             SystemClock.sleep(1000); capture("waiting-for-episode.png"); opened.set(null); key(KeyEvent.KEYCODE_DPAD_CENTER);
             await(() -> opened.get() != null && "tt0898266:10:3".equals(opened.get().getStringExtra("selected_video"))
                     && !opened.get().getBooleanExtra("auto_play", false), "the waiting card opens the scheduled episode without starting playback");

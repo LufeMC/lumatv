@@ -1435,7 +1435,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         float by = metaY + 16 * k + 36 * k;
         heroButton(c, 0, card.primary, x, by, alpha);
-        heroButton(c, 1, card.secondary, x + heroButtonWidth(0, card.primary) + 16 * k, by, alpha);
+        if (!card.secondary.equals(card.primary))
+            heroButton(c, 1, card.secondary, x + heroButtonWidth(0, card.primary) + 16 * k, by, alpha);
     }
 
     private float heroButtonWidth(int i, String label) {
@@ -2125,7 +2126,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_HERO:
                 if (dx != 0) {
-                    int next = Math.max(0, Math.min(1, heroIndex + dx));
+                    Card card = focusedCard();
+                    int last = card == null || card.secondary.equals(card.primary) ? 0 : 1;
+                    int next = Math.max(0, Math.min(last, heroIndex + dx));
                     if (next == heroIndex) return;
                     heroIndex = next;
                 } else if (dy < 0) {
