@@ -368,16 +368,17 @@ final class HomeMode {
     static void rebindRemoteKeys(Context c, Adb adb) throws Exception {
         JSONObject saved = state(c);
         if (!FREE.equals(saved.optString("mode")) || saved.optBoolean("homeReverted")) return;
-        String services = adb.shell("settings get secure enabled_accessibility_services").trim();
+        String services = adb.shell("settings --user current get secure enabled_accessibility_services").trim();
         String component = RemoteKeys.component(c);
         if (!RemoteKeys.contains(services, component)) return;
         String other = RemoteKeys.withoutService(services, component);
         try {
-            adb.shell("settings put secure enabled_accessibility_services " + quote(other));
+            if (other.isEmpty()) adb.shell("settings --user current delete secure enabled_accessibility_services");
+            else adb.shell("settings --user current put secure enabled_accessibility_services " + quote(other));
             Thread.sleep(500);
         }
-        finally { adb.shell("settings put secure enabled_accessibility_services " + quote(services)); }
-        adb.shell("settings put secure accessibility_enabled 1");
+        finally { adb.shell("settings --user current put secure enabled_accessibility_services " + quote(services)); }
+        adb.shell("settings --user current put secure accessibility_enabled 1");
     }
 
     /** Takes RemoteKeys out and restores the recorded values (RemoteKeys.restoreServices decides what exactly). */
