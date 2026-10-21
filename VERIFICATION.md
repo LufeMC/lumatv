@@ -262,3 +262,20 @@ Controlled player tests verified error fallback and release replacement.
 
 Focused checks also passed for forced captions, temporary rewind captions, shared add-on requests, and real server progress restoration.
 The full regression pass and installed-build identity remain separate acceptance steps.
+
+## Additional regression findings
+
+Version 1.1.40 passed the live next-episode preparation and automatic playback test.
+The exact next episode played with verified video and audio for twenty seconds.
+The high-bitrate regression then found an incorrect rejection before decoding.
+The player treated a format above the decoder's reported limits as a missing video track.
+The correction permits a decoder attempt for that format.
+It still requires a rendered video frame and advancing audio before acceptance.
+Known unsupported codecs remain excluded.
+The controlled media checks distinguish uncertain decoder limits from a missing decoder.
+The corrected behavior requires device verification.
+
+The same regression measured a 183-millisecond first prepared-preview draw.
+The next five draws took 29 to 40 milliseconds.
+The revised preview layer keeps its layout while hidden and prepares its bitmaps before display.
+These changes require another complete first-use measurement.

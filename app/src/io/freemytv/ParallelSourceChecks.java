@@ -79,15 +79,16 @@ final class ParallelSourceChecks implements AutoCloseable {
             SourceHeader header = SourceHeader.read(reader);
             reader.verify();
             if (PlaybackValidation.shortPlaceholder(expected, header.duration)) return new Result(SourceProbe.FAILED, "short");
-            boolean video = false, audio = false, supportedVideo = false, supportedAudio = false;
+            boolean video = false, audio = false, supportedVideo = false, supportedAudio = false, possibleVideo = false, possibleAudio = false;
             for (androidx.media3.common.Format track : header.formats) {
                 String type = track.sampleMimeType;
                 if (type == null) continue;
-                if (type.startsWith("video/")) { video = true; supportedVideo |= supported(track); }
-                if (type.startsWith("audio/")) { audio = true; supportedAudio |= supported(track); }
+                if (type.startsWith("video/")) { video = true; supportedVideo |= supported(track, false); possibleVideo |= supported(track, true); }
+                if (type.startsWith("audio/")) { audio = true; supportedAudio |= supported(track, false); possibleAudio |= supported(track, true); }
             }
             if (!video || !audio) return new Result(SourceProbe.FAILED, !video ? "picture" : "silent");
-            if (!supportedVideo || !supportedAudio) return new Result(SourceProbe.FAILED, "codec");
+            if (!possibleVideo || !possibleAudio) return new Result(SourceProbe.FAILED, "codec");
+            if (!supportedVideo || !supportedAudio) return new Result(SourceProbe.UNCERTAIN, "codec_limits");
             return new Result(SourceProbe.AVAILABLE, "media");
         } catch (Exception error) {
             for (Throwable cause = error; cause != null; cause = cause.getCause()) {
@@ -102,11 +103,11 @@ final class ParallelSourceChecks implements AutoCloseable {
             if (reader != null) try { reader.close(); } catch (Exception ignored) {}
         }
     }
-    private static boolean supported(androidx.media3.common.Format format) throws Exception {
+    private static boolean supported(androidx.media3.common.Format format, boolean allowExceeds) throws Exception {
         if (androidx.media3.common.MimeTypes.AUDIO_RAW.equals(format.sampleMimeType)) return true;
         for (androidx.media3.exoplayer.mediacodec.MediaCodecInfo decoder : androidx.media3.exoplayer.mediacodec.MediaCodecUtil.getDecoderInfosSoftMatch(
                 androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT, format, false, false))
-            if (decoder.isFormatSupported(format)) return true;
+            if (allowExceeds ? decoder.isFormatFunctionallySupported(format) : decoder.isFormatSupported(format)) return true;
         return false;
     }
     @Override public void close() {

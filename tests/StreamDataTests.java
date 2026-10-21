@@ -79,8 +79,15 @@ public class StreamDataTests extends TvTest {
                 candidate.quality = i < 10 ? 2160 : i < 15 ? 1080 : 720; candidates.add(candidate);
             }
             List<AddonStreams.Source> plan = PlaybackPlan.automatic(candidates);
-            check(plan.get(0).quality == 2160 && plan.get(2).quality == 1080 && plan.get(4).quality == 720, "automatic resolution fallback");
-            check(plan.size() == 12, "bounded automatic retry plan");
+            check(plan.get(0).quality == 2160 && plan.get(9).quality == 2160 && plan.get(10).quality == 1080,
+                    "higher resolutions remain ahead of lower resolutions");
+            check(plan.size() == 12, "bounded automatic candidate batch");
+            PlaybackSession batches = new PlaybackSession("tt0000043", "Quality order test", plan, -1);
+            batches.all.clear(); batches.all.addAll(candidates);
+            for (int i = 0; i < 12; i++) batches.next(); batches.next();
+            check(batches.queueMore(), "lower resolutions remain available after the initial batch");
+            check(batches.next().quality == 1080 && batches.next().quality == 1080 && batches.next().quality == 1080
+                    && batches.next().quality == 720, "additional batches continue downward through quality");
             output.putString("stream", "Passed " + checks + " stream data checks.\n"); finish(-1, output);
         } catch (Throwable failure) {
             output.putString("stream", "FAILED after " + checks + " checks: " + failure.getClass().getSimpleName()

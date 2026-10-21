@@ -70,6 +70,12 @@ public class SourcesActivity extends TvActivity {
         autoResume = getIntent().getBooleanExtra("auto_play", false);
         resumePosition = getIntent().getLongExtra("resume_position", -1);
         resumeDuration = getIntent().getLongExtra("resume_duration", 0);
+        String selectedVideo = getIntent().getStringExtra("selected_video");
+        if ("tv".equals(kind) && imdb != null && selectedVideo != null
+                && selectedVideo.matches(java.util.regex.Pattern.quote(imdb) + ":[0-9]+:[0-9]+")) {
+            String[] parts = selectedVideo.split(":");
+            try { season = Integer.parseInt(parts[1]); focusedEpisode = Integer.parseInt(parts[2]); } catch (NumberFormatException ignored) {}
+        }
         if (autoResume && resumeVideo.matches("tt[0-9]+:[0-9]+:[0-9]+")) {
             String[] parts = resumeVideo.split(":");
             try { season = Integer.parseInt(parts[1]); focusedEpisode = Integer.parseInt(parts[2]); } catch (Exception ignored) { autoResume = false; }

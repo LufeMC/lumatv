@@ -233,6 +233,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         pause = overlay.pause; seek = overlay.bar; nextEpisodeButton = overlay.next;
         root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
         scrubLayer = new PlayerScreens.Scrub(this); preview = scrubLayer.preview;
+        scrubLayer.setVisibility(View.INVISIBLE);
         root.addView(scrubLayer, new FrameLayout.LayoutParams(-1, -1));
         recapLabel = PlayerViews.text(this, "", Look.META, Look.INK_2, Ui.medium); recapLabel.setVisibility(View.GONE);
         root.addView(recapLabel, PlayerScreens.at(this, -2, -2, Gravity.TOP | Gravity.START, 96, 56, 0, 0));
@@ -286,7 +287,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         main.removeCallbacks(tick); main.removeCallbacks(advanceEpisode); main.removeCallbacks(confirmSeek); main.removeCallbacks(networkRetry);
         main.removeCallbacks(cueTick); main.removeCallbacks(scrubTick);
         savePosition(); syncLibrary();
-        if (scrub.active) { session.position = scrub.finish(false); scrubLayer.setVisibility(View.GONE); previewRequest++; main.removeCallbacks(decodePreview); }
+        if (scrub.active) { session.position = scrub.finish(false); scrubLayer.setVisibility(View.INVISIBLE); previewRequest++; main.removeCallbacks(decodePreview); }
         // Back from standby or the screensaver: paused, never replaying a finished episode from the start.
         wanted = false;
         if (frozenVideo != null) { frozenVideo.setVisibility(View.GONE); frozenVideo.setImageDrawable(null); }
@@ -648,7 +649,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         if (player == null || player.getCurrentTracks().getGroups().isEmpty()) return false;
         boolean video = false, sound = false;
         for (Tracks.Group group : player.getCurrentTracks().getGroups()) {
-            for (int i = 0; i < group.length; i++) if (group.isTrackSupported(i)) {
+            for (int i = 0; i < group.length; i++) if (group.isTrackSupported(i, true)) {
                 if (group.getType() == C.TRACK_TYPE_VIDEO) video = true;
                 if (group.getType() == C.TRACK_TYPE_AUDIO && group.isTrackSelected(i)) sound = true;
             }
@@ -686,7 +687,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
             session.outcome.put(current.url, played && player != null ? "stopped:" + player.getCurrentPosition() : "failed:" + failure);
             if (!"user".equals(failure)) PlaybackLog.add(this, "Source " + (session.index + 1) + " didn't play: " + reasonCode());
         }
-        if (scrub.active) { session.position = scrub.finish(false); scrubLayer.setVisibility(View.GONE); previewRequest++; main.removeCallbacks(decodePreview); }
+        if (scrub.active) { session.position = scrub.finish(false); scrubLayer.setVisibility(View.INVISIBLE); previewRequest++; main.removeCallbacks(decodePreview); }
         if (played) session.position = Math.max(0, session.position - 3000); generation++; release();
         main.removeCallbacks(networkRetry); waitingForNetwork = false;
         showRecover();
@@ -1462,7 +1463,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         hideControls(); introActions.setVisibility(View.GONE);
         if (upNextShown) closeUpNext();
         recover.title.setText(Ui.tr("Não foi possível iniciar a reprodução", "Playback could not start"));
-        recover.line.setText(Ui.tr("Tente novamente ou volte aos episódios.", "Try again, or return to episodes."));
+        recover.line.setText(Ui.tr("Tente novamente ou volte.", "Try again, or go back."));
         recover.choose.setVisibility(View.VISIBLE);
         recover.line.setVisibility(View.VISIBLE);
         recover.spinner.setVisibility(View.GONE); ((View) recover.dashes.getParent()).setVisibility(View.GONE);
@@ -1567,7 +1568,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         if (!scrub.active) return;
         boolean playing = scrub.playing; long from = scrub.original; long position = scrub.finish(confirmed);
         previewRequest++; previewCaptureActive = false; main.removeCallbacks(decodePreview); main.removeCallbacks(confirmSeek); main.removeCallbacks(scrubTick);
-        scrubLayer.setVisibility(View.GONE); subtitles.setVisibility(View.VISIBLE);
+        scrubLayer.setVisibility(View.INVISIBLE); subtitles.setVisibility(View.VISIBLE);
         if (player != null) {
             player.setScrubbingModeEnabled(false);
             sourceOpenedAt = SystemClock.elapsedRealtime();

@@ -197,6 +197,12 @@ final class ContinueWatching {
     static List<Entry> cached(Context context) {
         return visible(context, merge(stored(context, "local"), stored(context, "stremio"), services(context)));
     }
+    static List<Entry> history(Context context) {
+        List<Entry> entries = new ArrayList<>(stored(context, "local"));
+        entries.addAll(stored(context, "stremio"));
+        entries.sort((a, b) -> Long.compare(b.updated, a.updated));
+        return visible(context, entries);
+    }
     static List<Entry> refresh(Context context) {
         migrate(context);
         PlaybackMemory.init(context);

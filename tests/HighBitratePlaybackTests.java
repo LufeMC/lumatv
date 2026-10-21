@@ -15,12 +15,20 @@ public class HighBitratePlaybackTests extends TvTest {
     private PlayerActivity activity;
     private HomeActivity home;
     private int checks;
+    private String lastPlayerState = "none";
     private Object value(String name)throws Exception{Field f=PlayerActivity.class.getDeclaredField(name);f.setAccessible(true);return f.get(activity);}
     private ExoPlayer video()throws Exception{return (ExoPlayer)value("player");}
     private interface Condition{boolean ready()throws Exception;}
     private void await(Condition c,int seconds,String label)throws Exception{
         long end=SystemClock.elapsedRealtime()+seconds*1000L;
-        while(SystemClock.elapsedRealtime()<end){boolean[] ok={false};Throwable[] error={null};runOnMainSync(()->{try{ok[0]=c.ready();}catch(Throwable e){error[0]=e;}});
+        while(SystemClock.elapsedRealtime()<end){boolean[] ok={false};Throwable[] error={null};runOnMainSync(()->{try{
+            ExoPlayer p = video();
+            if (p != null) lastPlayerState = "state=" + p.getPlaybackState() + ", loading=" + p.isLoading()
+                    + ", position=" + p.getCurrentPosition() + ", buffered=" + p.getBufferedPosition()
+                    + ", video=" + p.getVideoFormat() + ", audio=" + p.getAudioFormat()
+                    + ", video_disabled=" + p.getTrackSelectionParameters().disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_VIDEO)
+                    + ", groups=" + p.getCurrentTracks().getGroups().size();
+            ok[0]=c.ready();}catch(Throwable e){error[0]=e;}});
             if(error[0]!=null)throw new AssertionError(label,error[0]);if(ok[0]){checks++;return;}SystemClock.sleep(100);}
         throw new AssertionError(label);
     }
@@ -57,7 +65,7 @@ public class HighBitratePlaybackTests extends TvTest {
             result.putString("stream","Passed "+checks+" high-bitrate and 4K fallback checks. "+report+"\n");
         }catch(Throwable e){
             String[] state={""};runOnMainSync(()->{try{ExoPlayer p=video();state[0]="; player="+(p==null?"none":p.getPlaybackState()+", playing="+p.isPlaying()+", format="+p.getVideoFormat())+"; rendered="+value("videoRendered")+"; audio="+value("audioAdvancing")+"; failures="+PlaybackSession.current.outcome.values();}catch(Exception ignored){}});
-            result.putString("stream","FAILED after "+checks+": "+e.getClass().getSimpleName()+": "+e.getMessage()+state[0]+"; capabilities="+report+"\n");}
+            result.putString("stream","FAILED after "+checks+": "+e.getClass().getSimpleName()+": "+e.getMessage()+state[0]+"; notes="+PlaybackSession.current.failureNotes+"; last="+lastPlayerState+"; capabilities="+report+"\n");}
         finally{runOnMainSync(()->{if(activity!=null)activity.finish();if(home!=null)home.finish();});
             try(java.io.FileOutputStream out=new java.io.FileOutputStream(new File(getTargetContext().getExternalFilesDir(null),"high-bitrate-playback.json"))){out.write(report.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));}catch(Exception ignored){}
             finish(result.getString("stream","").startsWith("Passed")?-1:0,result);}

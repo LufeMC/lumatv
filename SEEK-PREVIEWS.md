@@ -7,6 +7,8 @@ The Hisense TV remains unchanged.
 
 The player prepares nearby preview images during normal playback.
 Prepared images appear without a network request or a playback seek.
+The hidden preview layer keeps its measured layout.
+Prepared bitmaps request texture preparation before the first seek input.
 The playback decoder remains at its original position while the user examines prepared images.
 Back cancels the selection.
 OK confirms the selection immediately.
@@ -93,6 +95,10 @@ It checks that each requested image exists before the corresponding input.
 It measures input injection through the application's first preview draw.
 The measurement excludes physical remote transmission and the display panel response.
 The test also checks cancellation and three-second automatic confirmation.
+
+The version 1.1.40 regression found a 183-millisecond first draw.
+The remaining five draws took 29 to 40 milliseconds.
+Layout retention and bitmap preparation require a new device measurement.
 
 Generated video tests check actual red, green, and blue frames at different positions.
 The fixture retains thirty seconds in one Matroska cluster to test timestamp scanning.

@@ -4,6 +4,23 @@ The source includes the 55 improvements approved on October 20.
 Verification continues after reported playback failures.
 See [VERIFICATION.md](VERIFICATION.md) for the current evidence and remaining limits.
 
+## Added request: new-episode notices
+
+Home shows recent episode notices for series in the saved library and known watch history.
+A notice opens the series page with that episode selected.
+It does not start playback.
+A held Select press on the Home notice dismisses it.
+The content row includes a New episodes section.
+Background checks use two requests per pass and a two-hour cache.
+Failed requests wait ten minutes before another attempt.
+The application checks release timestamps and excludes known watched or started episodes.
+The notices cover the previous fourteen days.
+Unknown release times remain excluded.
+Release metadata does not confirm that a streaming source will work.
+Stremio notification preferences remain effective.
+Current Home checks cover IMDb-identified series from local progress and the Stremio library.
+Other streaming applications can provide incomplete identifiers and history.
+
 ## Your list (21)
 
 1. Rename to LumaTV by Madfer Operations, changing only the name shown on the TV. Keep the internal app ID (io.freemytv) so installed TVs still update.

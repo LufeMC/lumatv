@@ -80,9 +80,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     };
     private static final int REST = 0, CONTENT = 1, SEARCH = 2;
     static final int Z_ICONS = 0, Z_PILL = 1, Z_CHIP = 2, Z_LOGOS = 3, Z_HERO = 4, Z_ROW = 5, Z_KEYS = 6, Z_RESULTS = 7,
-            Z_RECENT = 9, Z_SETUP = 10;
+            Z_RECENT = 9, Z_SETUP = 10, Z_NEWS = 11;
     private static final int OV_NONE = 0, OV_MENU = 1, OV_ALL = 2;
-    private static final int CW = 0, PICK = 1;
+    private static final int CW = 0, PICK = 1, RELEASE = 2;
     private static final int ROW_MAX = 24, ROW_RESULTS = 8;
     private static final long TOAST_MS = 5000, FADE_MS = 500, HERO_DELAY = 250;
     private static final ExecutorService WORK = Executors.newFixedThreadPool(2), WHERE = Executors.newFixedThreadPool(4);
@@ -214,6 +214,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // Content
     final List<Card> row = new ArrayList<>();
     private List<ContinueWatching.Entry> entries = new ArrayList<>();
+    private List<NewEpisodes.Notice> episodeNotices = new ArrayList<>();
+    private volatile boolean noticeVisible;
     List<HomeApps.Item> shelf = new ArrayList<>();
     private List<HomeApps.Item> others = new ArrayList<>(), inputs = new ArrayList<>();
     private float[] logoW = new float[0], logoH = new float[0], logoX = new float[0];
@@ -339,6 +341,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         overlay.setVisibility(INVISIBLE);
         loadRecent();
         entries = ContinueWatching.cached(a);
+        episodeNotices = NewEpisodes.cached(a, NewEpisodes.followed(a, entries), System.currentTimeMillis());
         buildRow();
         online = hasNetwork();
         zone = restZone();
@@ -399,6 +402,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     void pause() {
+        noticeVisible = false;
         if (resumePrompt != null) { resumePrompt.dialog.dismiss(); resumePrompt = null; }
         if (!running) return;
         running = false;
@@ -514,11 +518,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         final Context c = getContext().getApplicationContext();
         WORK.execute(() -> {
             final List<ContinueWatching.Entry> loaded = ContinueWatching.refresh(c);
+            final List<ContinueWatching.Entry> followed = NewEpisodes.followed(c, loaded);
+            final List<NewEpisodes.Notice> notices = NewEpisodes.cached(c, followed, System.currentTimeMillis());
             handler.post(() -> {
                 if (!running) return;
                 entries = loaded;
+                episodeNotices = notices;
                 buildRow();
                 changed();
+                noticeVisible = online;
+                if (online) NewEpisodes.refresh(c, followed, () -> noticeVisible, () -> handler.post(() -> {
+                    if (!running) return;
+                    episodeNotices = NewEpisodes.cached(c, followed, System.currentTimeMillis());
+                    buildRow(); changed();
+                }));
             });
         });
     }
@@ -542,6 +555,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (ContinueWatching.Entry e : entries) {
             if (row.size() >= 12) break;
             row.add(cwCard(e, cw));
+        }
+        for (NewEpisodes.Notice notice : episodeNotices) {
+            Card card = cwCard(notice.entry, Ui.tr("Novos episódios", "New episodes"));
+            card.kind = RELEASE; card.key = "release:" + notice.key();
+            card.kicker = Ui.tr("Novo episódio", "New episode"); card.left = "";
+            card.sub = card.meta; card.progress = -1;
+            card.primary = card.secondary = Ui.tr("Ver episódio", "View episode");
+            row.add(card);
         }
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (ContinueWatching.Entry e : entries) seen.add(ContinueWatching.showKey(e));
@@ -572,6 +593,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             setMode(REST);
         }
         if (zone == Z_CHIP && chipEntry() == null) zone = Z_PILL;
+        if (zone == Z_NEWS && episodeNotices.isEmpty()) zone = Z_PILL;
         aimRow(true);
         heroTitleFor = null;
         scheduleHero();
@@ -1058,7 +1080,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             drawSetup(c, restA);
         } else {
             drawPill(c, ct, st);
-            if (restA > 0.004f) drawChip(c, restA);
+            if (restA > 0.004f) { drawChip(c, restA); drawEpisodeNotice(c, restA); }
         }
         if (contentA > 0.004f) {
             drawHero(c, contentA);
@@ -1255,6 +1277,24 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         long left = e.duration > e.position ? (e.duration - e.position + 59_999) / 60_000 : 0;
         String s = join(code, left > 0 ? left + Ui.tr(" min restantes", " min left") : "");
         return s.isEmpty() ? "" : "· " + s;
+    }
+
+    private void drawEpisodeNotice(Canvas c, float alpha) {
+        if (episodeNotices.isEmpty() || !online) return;
+        ContinueWatching.Entry e = episodeNotices.get(0).entry;
+        String label = Ui.tr("Novo episódio", "New episode") + " · " + e.title + " · " + e.code();
+        if (episodeNotices.size() > 1) label += "  +" + (episodeNotices.size() - 1);
+        float max = w - 2 * SAFE * k;
+        label = android.text.TextUtils.ellipsize(label, new TextPaint(chipP), max - 48 * k, android.text.TextUtils.TruncateAt.END).toString();
+        float width = chipP.measureText(label) + 48 * k;
+        float top = (chipEntry() == null ? CHIP_TOP : CHIP_TOP + CHIP_H + 22) * k;
+        r.set((w - width) / 2, top, (w + width) / 2, top + 64 * k);
+        boolean focused = zone == Z_NEWS && overlayKind == OV_NONE;
+        int ink = restInk();
+        fill.setColor(Ui.alpha(focused ? ink : day() ? 0x66FFFFFF : 0x52141010, alpha));
+        c.drawRoundRect(r, 32 * k, 32 * k, fill);
+        chipP.setColor(Ui.alpha(focused ? day() ? Look.DAY_GROUND : Look.ON_INK : ink, alpha));
+        c.drawText(label, r.left + 24 * k, r.centerY() + Ui.halfCap(chipP), chipP);
     }
 
     /** No TMDB key yet: apps work; a card offers setup from the phone or on the TV (HomeNoKey). */
@@ -1980,6 +2020,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case Z_ICONS: return new String[] {Ui.tr("Entradas", "Inputs"), Ui.tr("Todos os apps", "All apps"), Ui.tr("Configurações", "Settings")}[iconIndex];
             case Z_PILL: return Ui.tr("Buscar", "Search") + (query.isEmpty() ? "" : ": " + query);
             case Z_CHIP: return chipEntry() == null ? "" : Ui.tr("Continuar ", "Resume ") + chipEntry().title;
+            case Z_NEWS: return episodeNotices.isEmpty() ? "" : Ui.tr("Novo episódio de ", "New episode of ") + episodeNotices.get(0).entry.title + " " + episodeNotices.get(0).entry.code();
             case Z_LOGOS: return logoIndex < shelf.size() ? shelf.get(logoIndex).label : "";
             case Z_ROW: return focusedCard() == null ? "" : focusedCard().title + ", " + focusedCard().sub;
             case Z_HERO: return focusedCard() == null ? "" : heroIndex == 0 ? focusedCard().primary : focusedCard().secondary;
@@ -2040,6 +2081,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (mode == SEARCH) { zone = Z_KEYS; break; }
                 if (mode == CONTENT) { zone = Z_HERO; heroIndex = 0; break; }
                 if (chipEntry() != null) zone = Z_CHIP;
+                else if (!episodeNotices.isEmpty()) zone = Z_NEWS;
                 else if (hasRow()) toRow();
                 else if (!shelf.isEmpty()) toLogos();
                 else return;
@@ -2051,8 +2093,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_CHIP:
                 if (dy < 0) zone = Z_PILL;
-                else if (dy > 0) { if (hasRow()) toRow(); else if (!shelf.isEmpty()) toLogos(); else return; }
+                else if (dy > 0) { if (!episodeNotices.isEmpty()) zone = Z_NEWS; else if (hasRow()) toRow(); else if (!shelf.isEmpty()) toLogos(); else return; }
                 else return;
+                break;
+            case Z_NEWS:
+                if (dy < 0) zone = chipEntry() == null ? Z_PILL : Z_CHIP;
+                else if (dy > 0) {
+                    if (hasRow()) { toRow(); for (int i = 0; i < row.size(); i++) if (row.get(i).kind == RELEASE) { rowIndex = i; aimRow(true); break; } }
+                    else if (!shelf.isEmpty()) toLogos();
+                } else return;
                 break;
             case Z_HERO:
                 if (dx != 0) {
@@ -2256,6 +2305,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case Z_CHIP:
                 if (chipEntry() != null) { click.open(); resume(chipEntry()); }
                 return;
+            case Z_NEWS:
+                if (!episodeNotices.isEmpty()) {
+                    for (Card card : row) if (card.kind == RELEASE) { click.open(); details(card); break; }
+                }
+                return;
             case Z_HERO: {
                 Card c = focusedCard();
                 if (c == null) return;
@@ -2308,7 +2362,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void onLongPress() {
-        if (zone == Z_ROW && focusedCard() != null) {
+        if (zone == Z_NEWS && !episodeNotices.isEmpty()) {
+            NewEpisodes.dismiss(getContext(), episodeNotices.get(0));
+            episodeNotices = NewEpisodes.cached(getContext(), NewEpisodes.followed(getContext(), entries), System.currentTimeMillis());
+            buildRow(); changed();
+        } else if (zone == Z_ROW && focusedCard() != null) {
             openCardMenu(focusedCard());
         } else if (zone == Z_CHIP && !row.isEmpty() && row.get(0).kind == CW) {
             openCardMenu(row.get(0));
@@ -2608,6 +2666,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The hero's main button. */
     private void primary(Card card) {
+        if (card.kind == RELEASE) { details(card); return; }
         if (card.kind == CW) {
             resume(card.entry);
             return;
@@ -2662,7 +2721,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 }
             }
             handler.post(() -> {
-                if (e.tmdb > 0) openTitle(e.tmdb, e.kind, e.title, e.imdb);
+                if (e.tmdb > 0 && card.kind == RELEASE) start(new Intent(activity, SourcesActivity.class)
+                        .putExtra("title_id", e.tmdb).putExtra("title_kind", e.kind).putExtra("title_name", e.title)
+                        .putExtra("imdb", e.imdb).putExtra("selected_video", e.video));
+                else if (e.tmdb > 0) openTitle(e.tmdb, e.kind, e.title, e.imdb);
                 else if (e.external()) resume(e);
                 else showToast(Ui.tr("Não foi possível abrir este título. Tente de novo.", "Couldn't open this title. Try again."));
             });

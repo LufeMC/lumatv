@@ -23,7 +23,7 @@ public class ServiceNavigationTests extends TvTest {
             if("com.netflix.ninja".equals(intent.getPackage())){launches.incrementAndGet();return new ActivityResult(Activity.RESULT_CANCELED,null);}return null;
         }};
         try{
-            getUiAutomation();addMonitor(monitor);TitleSearch.Title love=null;
+            Ui.init(getTargetContext());getUiAutomation();addMonitor(monitor);TitleSearch.Title love=null;
             for(TitleSearch.Title item:TitleSearch.search("Love Is Blind"))if(item.series()&&item.name.equalsIgnoreCase("Love Is Blind")){love=item;break;}
             if(love==null)throw new AssertionError("Title metadata is unavailable");
             title=(SourcesActivity)startActivitySync(new Intent(getTargetContext(),SourcesActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("title_id",love.id).putExtra("title_kind","tv").putExtra("title_name",love.name));

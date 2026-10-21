@@ -62,7 +62,7 @@ final class SeekPreview extends LinearLayout {
         state.setText(frame == null ? Ui.tr("Carregando prévia…", "Loading preview…") : "");
         return frame != null;
     }
-    void frame(long position, Bitmap image) { frames.put(key(position), image); show(selectedPosition); }
+    void frame(long position, Bitmap image) { image.prepareToDraw(); frames.put(key(position), image); show(selectedPosition); }
     void unavailable() { if (frames.get(selected) == null) state.setText(Ui.tr("Prévia indisponível", "Preview unavailable")); }
     boolean available(long position) { return frames.get(key(position)) != null; }
     void clear() { frames.evictAll(); for (ImageView image : images) image.setImageBitmap(null); }
