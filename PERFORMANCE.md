@@ -49,10 +49,15 @@ The measurements do not establish electricity or subscription savings.
 
 ## Source verification
 
-Two workers check small source responses in parallel.
-Each requests the first 4 KiB, with bounded network waits.
+Four workers inspect container headers in parallel.
+Each check has a 2 MiB network limit and bounded waits.
+Matroska checks can stop after runtime and track metadata, before large attachments.
 HTTP failures, empty responses, and obvious text errors fail verification.
 Uncertain responses can proceed to the player.
+Actual video dimensions and frame rate must fit a decoder's reported limits.
+Audio channels and sample rate must also fit an available decoder.
+These checks override incorrect resolution labels from a provider.
+An uncertain codec-level declaration can still receive a playback attempt when those limits fit.
 Only one video decoder plays a source at a time.
 
 The player checks the expected runtime against the available duration.
@@ -62,12 +67,12 @@ It requires rendered video and advancing decoded audio output.
 Rejected clips cannot save progress or mark an episode complete.
 These checks cannot prove the semantic content of every video.
 
-The controlled source suite passed 50 checks.
-The extended controlled player-failure suite passed 13 checks.
+The controlled source suite passed 57 checks.
+The extended controlled player-failure suite passed 16 checks.
 The suite included decodable error clips, audio-only responses, video-only responses, and absent audio-output confirmation.
 It confirmed automatic recovery to generated full-duration video.
 
-Two live checks used The Big Bang Theory, season 9, episode 22, through the authorized account.
+Two earlier live checks used The Big Bang Theory, season 9, episode 22, through the authorized account.
 The player rejected earlier sources and reached a source lasting 1,201,632 milliseconds.
 Both checks measured a maximum of two parallel source checks.
 The captured frame showed the episode with English subtitles.

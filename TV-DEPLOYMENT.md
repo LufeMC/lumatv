@@ -70,8 +70,9 @@ Commit the final source before building a version for distribution.
 
 The `--release` build excludes the TMDB key, city, latitude, and longitude.
 The TV reads its encrypted saved setup after installation.
-An older private build automatically transfers its compiled setup into encrypted TV storage.
+A private build with setup migration transfers its compiled configuration into encrypted TV storage.
 Complete that transfer before installing a build without personal configuration.
+If the installed version lacks migration, save the existing configuration through the phone setup page after the update.
 
 A normal `./build.sh` can include values from `config.properties`.
 Keep that APK private.

@@ -37,7 +37,7 @@ The identifiers below group the 55 approved improvements without changing their 
 | U1 | LumaTV name and original package | Device: installed name, Home, settings, and update package. |
 | U2 | Flora icon and banner | Generated resources included in the APK. |
 | U3 | Phone search through QR | Device: `PhoneLinkTests`; authenticated text delivery. |
-| U4 | Remote application button mapping | Device: six checks through the Android accessibility service. A mapped key opened Search. Idle media keys left Home visible. Physical branded buttons remain model-dependent. |
+| U4 | Remote application button mapping | Device: eight checks through the Android accessibility service. A mapped key opened Search. Idle media keys left Home visible. Physical branded buttons remain model-dependent. |
 | U5 | Prepare the next episode | Logic: source preparation and bounded media prefetch. Device: the player cached one MiB for the next episode. It then started that episode automatically. Video and audio continued for twenty seconds. |
 | U6 | Late-night Still watching prompt | Device: clock overrides tested both sides of midnight, prompt focus, timeout pause, wake release, and continued viewing. |
 | U7 | Stremio library and progress | Device: connected account, imported library, and local merge. A real server round trip passed seven checks. The original server watch state was restored. Other tests suppress progress uploads. |
@@ -98,30 +98,42 @@ Each private result record identifies the exact APK.
 | Suite | Passed checks |
 | --- | ---: |
 | SystemTests | 119 |
-| PlaybackDataTests | 283 |
+| PlaybackDataTests | 288 |
 | DiscoveryDataTests | 16 |
-| EpisodeDataTests | 14 |
+| EpisodeDataTests | 17 |
 | IntroDataTests | 22 |
 | ProgressDataTests | 28 |
-| StreamDataTests | 36 |
-| SourceFailureTests | 50 |
+| StreamDataTests | 38 |
+| SourceFailureTests | 57 |
+| AddonRequestTests | 5 |
+| ParallelSourceTests | 16 |
+| PreparedPreviewDataTests | 27 |
+| SetupDataTests | 9 |
 | SearchAccessTests | 11 |
-| PlayerFlowTests | 23 |
+| PlayerFlowTests | 26 |
 | PlayerTests | 40 |
-| PlayerFailureTests | 13 |
+| PlayerFailureTests | 16 |
 | EpisodeFlowTests | 25 |
 | ArtworkLifecycleTests | 8 |
 | PerformanceTests | 3 |
 | PhoneLinkTests | 11 |
 | ServiceNavigationTests | 7 |
-| PreparedPreviewDataTests | 27 |
 | ScreensaverTests | 6 |
-| SetupDataTests | 9 |
 | HomeControlsTests | 14 |
-| ContinueUiTests | 11 |
+| ContinueUiTests | 12 |
 | DiscoveryUiTests | 19 |
 | DesignReviewTests | 21 |
 | DesignStatesTests | 17 |
+| PortugueseLayoutTests | 4 |
+| FocusRecoveryTests | 3 |
+| IntroPlayerTests | 15 |
+| SubtitleModesTests | 6 |
+| SubtitlePipelineTests | 6 |
+| SyncTransportTests | 16 |
+| LiveBingeTests | 8 |
+| HighBitratePlaybackTests | 9 |
+| NewEpisodeTests | 33 |
+| RemoteServiceTests | 8 |
 
 `DesignReviewTests` captured 18 native screens.
 `DesignStatesTests` added 19 captures of secondary states.
@@ -279,3 +291,104 @@ The same regression measured a 183-millisecond first prepared-preview draw.
 The next five draws took 29 to 40 milliseconds.
 The revised preview layer keeps its layout while hidden and prepares its bitmaps before display.
 These changes require another complete first-use measurement.
+
+
+## Home release notices and series retention
+
+Version 1.1.45 passed 31 release-data and Home checks.
+The tests cover release timestamps, episode identity, duplicate entries, expiry, dismissal, navigation, and explicit selection without automatic playback.
+They also cover a series between releases and an unknown next release date.
+A confirmed series ending removes its waiting state when no unwatched episode remains.
+An expired release notice leaves the correct unwatched episode under Your series as Up next.
+Temporary Stremio history does not require a saved-library action.
+
+A separate connected-account check used the reported VisionQuest state.
+The library recorded episode 2 as finished with a zero resume position.
+LumaTV retained the series and identified episode 3 as its next scheduled episode.
+The test read account data and public metadata without uploading progress.
+The native Home test captured the notice, content card, and waiting card.
+Release times depend on the catalog's metadata.
+They do not confirm that a playback source is available.
+
+## Decoder capability regression
+
+Two tested files were labeled 1080p but contained 3840-by-2160 video.
+The G3 decoder could not decode those tracks.
+The metadata check now rejects unsupported dimensions before allocating the playback decoder.
+It also checks frame rate, audio channels, and sample rate.
+A generated 26 KiB fixture reproduces the incorrect resolution label.
+The parallel metadata suite passed sixteen checks.
+The high-bitrate suite passed nine checks.
+It retained verified 55-Mbps 1080p playback with zero dropped frames over twenty seconds.
+
+The version 1.1.44 playback runs took 26.1 and 19.8 seconds to start the reported episodes.
+Those runs still attempted the incorrectly labeled 4K files.
+The corrected episode 2 run rejected them during metadata inspection and started in 20.6 seconds.
+Provider and network response time remain part of these measurements.
+Earlier four-worker samples started in 13.4 and 14.1 seconds.
+These small samples do not establish a guaranteed startup time.
+
+## Additional test setup corrections
+
+The new Home notice test now observes the currently visible Home activity.
+It waits for the opening animation before navigation input.
+Baseline tests clear only their isolated copy of episode notices.
+The Continue Watching test removes its activity monitor only after registration.
+These changes prevent test-state and lifecycle errors from hiding the actual assertion result.
+
+The G3 vendor memory service force-stopped one episode-navigation test.
+The private log identifies the vendor process that requested the stop.
+After Android speed compilation, the repeated episode-navigation test passed all 25 checks.
+The remote service passed eight checks, including preservation of its service list and household button mapping.
+The idle renderer recorded zero callbacks in a four-second sample.
+The TV firmware and vendor service configuration remained unchanged.
+
+## Final installed application
+
+The application source commit is `7fbed48`.
+Version 1.1.47 contains the Home action correction and approved remote-service restart correction.
+Its APK SHA-256 is `c8ae07ea550dafdcccdfdc163c457e87a3445be39e713afc88e2650acc7cd968`.
+TV2's installed APK matched that hash.
+The original signing certificate remained unchanged.
+The corrected Home screen passed 33 episode-notice checks and three focus-recovery checks.
+A native screenshot confirms one action for a waiting series.
+
+The version 1.1.45 playback tests used BBT S10 E2 and S10 E3.
+Both passed sixty seconds of video and advancing audio with English subtitles.
+Startup took 20.6 and 17.1 seconds, respectively.
+The episode 3 test automatically rejected a source without working audio.
+Version 1.1.46 changes only the Home action display and navigation.
+The user accepted the measured playback startup time for this delivery.
+
+Three process-cold Home starts on version 1.1.45 took 816, 856, and 883 milliseconds.
+The median was 856 milliseconds.
+Home used 70,193 KiB of proportional resident memory after that measurement.
+These measurements do not include a TV boot or provider response guarantees.
+
+The six protected household checksums remained unchanged after playback verification.
+Saved playback progress, series selection, and player-state checksums also remained unchanged.
+The Continue Watching checksum changed during normal connected-account refresh.
+The test did not restore stale cloud-refresh data over the current account cache.
+The encrypted setup, configured location, and Celsius setting remained available.
+Temporary instrumentation and the generated 262 MiB playback clip were removed from TV2.
+The ten-minute test wake-up heartbeat was paused.
+
+## Remote service after instrumentation
+
+Instrumentation can leave Android's approved accessibility service in its crashed-service list.
+On this TV, an empty settings value did not clear that state.
+The restart now deletes an empty service list before restoring the exact approved list.
+It selects the current Android user explicitly.
+The final application passed eight remote-service checks through actual kernel input events.
+These checks preserved the enabled-service list and household button mappings.
+
+## Hisense deployment
+
+Hisense received version 1.1.47 after the second-TV checks passed.
+Both installed APKs matched the final build hash.
+The update used the original signing certificate and preserved application data.
+The older Hisense version did not have encrypted setup migration.
+The existing TMDB configuration was saved through the authenticated phone setup page.
+That page confirmed the key, San Francisco, the US region, and Celsius.
+The native Settings screen confirmed Always night and the active LumaTV Home mode.
+Active playback tests remained on TV2.

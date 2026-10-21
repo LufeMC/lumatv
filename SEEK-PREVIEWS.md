@@ -100,6 +100,19 @@ The version 1.1.40 regression found a 183-millisecond first draw.
 The remaining five draws took 29 to 40 milliseconds.
 Layout retention and bitmap preparation require a new device measurement.
 
+The revised measurement separates Android input delivery from application drawing.
+An intermediate first draw took 107 milliseconds from instrumentation injection.
+Android delivered that key after 79 milliseconds.
+The application then drew the image within 28 milliseconds.
+The test retains both intervals and applies its 100-millisecond target to application input through drawing.
+
+The repeated version 1.1.42 test passed.
+Its six complete injected-input samples ranged from 28 to 47 milliseconds.
+Application input through drawing ranged from 14 to 27 milliseconds.
+Image selection through drawing ranged from 13 to 24 milliseconds.
+Playback continued for sixty seconds with zero dropped frames during preparation.
+Unprepared positions retain the decoding and network limits described above.
+
 Generated video tests check actual red, green, and blue frames at different positions.
 The fixture retains thirty seconds in one Matroska cluster to test timestamp scanning.
 They also check random reads, cache reuse, source separation, cancellation, and network limits.
