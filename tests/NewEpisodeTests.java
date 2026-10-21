@@ -103,6 +103,11 @@ public class NewEpisodeTests extends TvTest {
             List<ContinueWatching.Entry> imported = NewEpisodes.followed(getTargetContext(), Collections.emptyList());
             check(imported.size() == 1 && imported.get(0).completed, "the full Stremio library retains a finished episode with zero resume offset");
             check(NewEpisodes.waiting(getTargetContext(), imported, now).size() == 1, "the imported series remains on Home while waiting");
+            item.put("removed", true).put("temp", true); LibrarySync.store(getTargetContext(), new JSONArray().put(item));
+            check(NewEpisodes.waiting(getTargetContext(), NewEpisodes.followed(getTargetContext(), Collections.emptyList()), now).size() == 1,
+                    "recent temporary Stremio watch history remains visible without a saved-library action");
+            item.put("temp", false); LibrarySync.store(getTargetContext(), new JSONArray().put(item));
+            check(NewEpisodes.followed(getTargetContext(), Collections.emptyList()).isEmpty(), "an explicit library removal remains effective");
             LibrarySync.store(getTargetContext(), new JSONArray());
             getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().remove("timeline:" + show.imdb).commit();
             show.episode = 1; show.video = "tt0898266:10:1"; show.completed = false;
@@ -121,7 +126,8 @@ public class NewEpisodeTests extends TvTest {
                     if (((NewEpisodes.Notice) itemNotice).entry.video.equals("tt0898266:10:2")) return true;
                 return false;
             }, "Home loads the cached notice without a network request");
-            SystemClock.sleep(4000); key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN);
+            await(() -> value(view, "opening") == null || !((Opening) value(view, "opening")).playing(), "the opening finishes before navigation input");
+            key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN);
             await(() -> view.zone == HomeView.Z_NEWS, "two Down presses select the notice below Resume");
             capture("new-episode-home.png"); addMonitor(monitor); key(KeyEvent.KEYCODE_DPAD_CENTER);
             await(() -> opened.get() != null, "Select opens the series page");
@@ -133,6 +139,27 @@ public class NewEpisodeTests extends TvTest {
             key(KeyEvent.KEYCODE_DPAD_DOWN); key(KeyEvent.KEYCODE_DPAD_DOWN);
             runOnMainSync(() -> { try { java.lang.reflect.Method method = HomeView.class.getDeclaredMethod("onLongPress"); method.setAccessible(true); method.invoke(view); } catch (Exception e) { throw new RuntimeException(e); } });
             await(() -> ((List<?>) value(view, "episodeNotices")).isEmpty() && view.zone == HomeView.Z_PILL, "dismissal removes the notice and preserves a valid focus");
+            show.episode = 2; show.video = "tt0898266:10:2";
+            ContinueWatching.finished(getTargetContext(), show, null);
+            metadata.put("videos", new JSONArray().put(episode(1, now - 200000)).put(episode(2, now - 60000)).put(episode(3, now + 3600000)));
+            getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().putString("timeline:" + show.imdb, NewEpisodes.timeline(show.imdb, metadata, now).toString()).commit();
+            runOnMainSync(() -> { try { java.lang.reflect.Method method = HomeView.class.getDeclaredMethod("refreshRow"); method.setAccessible(true); method.invoke(view); } catch (Exception e) { throw new RuntimeException(e); } });
+            await(() -> ((List<?>) value(view, "waitingSeries")).size() == 1, "Home retains the completed series while its next episode is unavailable");
+            runOnMainSync(() -> { try {
+                java.lang.reflect.Method method = HomeView.class.getDeclaredMethod("toRow"); method.setAccessible(true); method.invoke(view);
+                List<?> cards = (List<?>) value(view, "row");
+                for (int i = 0; i < cards.size(); i++) if ("waiting:tt0898266".equals(value(cards.get(i), "key"))) {
+                    Field index = HomeView.class.getDeclaredField("rowIndex"); index.setAccessible(true); index.set(view, i);
+                    java.lang.reflect.Method aim = HomeView.class.getDeclaredMethod("aimRow", boolean.class); aim.setAccessible(true); aim.invoke(view, true);
+                }
+            } catch (Exception e) { throw new RuntimeException(e); } });
+            await(() -> {
+                Object card = ((List<?>) value(view, "row")).get((Integer) value(view, "rowIndex"));
+                return "Waiting for the next episode".equals(value(card, "kicker")) && ((String) value(card, "meta")).startsWith("Next episode:");
+            }, "the retained card explains the waiting state and next release date");
+            SystemClock.sleep(1000); capture("waiting-for-episode.png"); opened.set(null); key(KeyEvent.KEYCODE_DPAD_CENTER);
+            await(() -> opened.get() != null && "tt0898266:10:3".equals(opened.get().getStringExtra("selected_video"))
+                    && !opened.get().getBooleanExtra("auto_play", false), "the waiting card opens the scheduled episode without starting playback");
             output.putString("stream", "Passed " + checks + " new-episode release and Home checks.\n");
         } catch (Throwable error) { output.putString("stream", "FAILED after " + checks + ": " + error.getClass().getSimpleName() + ": " + error.getMessage() + "\n"); }
         finally { removeMonitor(monitor); runOnMainSync(() -> { if (home != null) home.finish(); }); finish(output.getString("stream", "").startsWith("Passed") ? -1 : 0, output); }

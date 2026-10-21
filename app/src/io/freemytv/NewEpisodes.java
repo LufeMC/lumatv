@@ -43,13 +43,14 @@ final class NewEpisodes {
             e.art = item.isNull("poster") ? "" : item.optString("poster");
             if (state != null) {
                 e.video = state.optString("video_id"); e.position = state.optLong("timeOffset");
-                e.completed = state.optInt("flaggedWatched") > 0;
+                e.duration = state.optLong("duration");
+                e.completed = state.optInt("flaggedWatched") > 0 || ContinueWatching.finished(e.position, e.duration);
                 try { e.updated = java.time.Instant.parse(state.optString("lastWatched")).toEpochMilli(); } catch (RuntimeException ignored) {}
                 String[] parts = e.video.split(":");
                 if (parts.length == 3) try { e.season = Integer.parseInt(parts[1]); e.episode = Integer.parseInt(parts[2]); } catch (NumberFormatException ignored) {}
             }
             ContinueWatching.Entry existing = shows.get(id);
-            if (existing == null && (item.optBoolean("removed") || item.optBoolean("temp"))) continue;
+            if (existing == null && (item.optBoolean("removed") || item.optBoolean("temp")) && (e.episode <= 0 || e.updated <= 0)) continue;
             if (!e.title.isEmpty() && (existing == null || e.episode > 0 && e.updated > existing.updated)) {
                 if (existing != null) { e.tmdb = existing.tmdb; if (e.art.isEmpty()) e.art = existing.art; }
                 shows.put(id, e);

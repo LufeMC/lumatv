@@ -17,6 +17,7 @@ public class ContinueUiTests extends TvTest {
     private Activity home;
     private HomeView view;
     private int checks;
+    private boolean monitored;
     private Object value(Object owner,String name)throws Exception{Field f=owner.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(owner);}
     private interface Condition{boolean ready()throws Exception;}
     private void await(Condition condition,String label)throws Exception{
@@ -52,11 +53,11 @@ public class ContinueUiTests extends TvTest {
             key(KeyEvent.KEYCODE_DPAD_LEFT);await(()->(Integer)value(view,"rowIndex")==0,"Left retains the first card");
             key(KeyEvent.KEYCODE_BACK);key(KeyEvent.KEYCODE_BACK);await(()->(Integer)value(view,"zone")==HomeView.Z_PILL,"Back returns focus to Search");
             key(KeyEvent.KEYCODE_DPAD_DOWN);await(()->(Integer)value(view,"zone")==HomeView.Z_CHIP,"Resume remains available");
-            addMonitor(monitor);key(KeyEvent.KEYCODE_DPAD_CENTER);await(()->resumed.get()!=null,"Resume opens the title playback request");
+            addMonitor(monitor);monitored=true;key(KeyEvent.KEYCODE_DPAD_CENTER);await(()->resumed.get()!=null,"Resume opens the title playback request");
             await(()->entry.video.equals(resumed.get().getStringExtra("resume_video")),"Resume requests the saved episode");
             await(()->resumed.get().getLongExtra("resume_position",0)==90000&&resumed.get().getBooleanExtra("auto_play",false),"Resume requests the saved position automatically");
             result.putString("stream","Passed "+checks+" Continue Watching UI checks.\n");
         }catch(Throwable e){result.putString("stream","FAILED after "+checks+": "+e.getClass().getSimpleName()+": "+e.getMessage()+"\n");}
-        finally{removeMonitor(monitor);runOnMainSync(()->{if(home!=null)home.finish();});finish(result.getString("stream","").startsWith("Passed")?-1:0,result);}
+        finally{if(monitored)removeMonitor(monitor);runOnMainSync(()->{if(home!=null)home.finish();});finish(result.getString("stream","").startsWith("Passed")?-1:0,result);}
     }
 }

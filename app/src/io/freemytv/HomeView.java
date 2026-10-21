@@ -572,7 +572,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (NewEpisodes.Notice notice : waitingSeries) {
             Card card = cwCard(notice.entry, Ui.tr("Suas séries", "Your series"));
             card.kind = RELEASE; card.key = "waiting:" + notice.entry.imdb;
-            card.kicker = Ui.tr("Aguardando o próximo episódio", "Waiting for next episode");
+            card.kicker = Ui.tr("Aguardando o próximo episódio", "Waiting for the next episode");
             card.meta = card.sub = notice.released > 0 ? Ui.tr("Próximo episódio: ", "Next episode: ")
                     + android.text.format.DateFormat.getMediumDateFormat(getContext()).format(new java.util.Date(notice.released)) : "";
             card.left = ""; card.progress = -1;

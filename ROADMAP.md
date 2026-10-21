@@ -22,12 +22,13 @@ Current Home checks cover IMDb-identified series from local progress and the Str
 Other streaming applications can provide incomplete identifiers and history.
 
 Home also retains an ongoing series after its latest released episode is watched.
-The Your series section shows Waiting for next episode.
+The Your series section shows Waiting for the next episode.
 When the metadata supplies a future release date, the card shows that date.
 When that episode reaches its listed release time, a new-episode notice replaces the waiting state.
 An ongoing series remains visible when the next release date is unknown.
 A confirmed series ending removes the waiting state when no future episode is listed.
 This behavior also reads completed episodes with zero resume offset from the Stremio library.
+Recent temporary watch-history entries do not require a saved-library action.
 It does not change the Stremio application's own watching-list rules.
 
 ## Your list (21)

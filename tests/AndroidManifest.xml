@@ -8,6 +8,7 @@
     <instrumentation android:name="io.freemytv.DesignStatesTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.LiveBingeTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.NewEpisodeTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.VisionQuestTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
     <instrumentation android:name="io.freemytv.HighBitratePlaybackTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.SyncTransportTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
     <instrumentation android:name="io.freemytv.PortugueseLayoutTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />

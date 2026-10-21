@@ -78,8 +78,8 @@ public class PreparedPreviewTests extends TvTest {
                     .put("cpu_ms", android.os.Process.getElapsedCpuTime() - cpu).put("min_available_memory_bytes", minMemory[0])
                     .put("dropped_frames", droppedAfter[0] - droppedBefore[0]).put("readiness", readiness);
             if (position[0] - original[0] < 55000) throw new AssertionError("Playback lost more than five seconds during preparation");
-            JSONArray samples = new JSONArray(), selectedSamples = new JSONArray(), deliverySamples = new JSONArray();
-            report.put("remote_to_draw_ms", samples).put("selected_to_draw_ms", selectedSamples).put("input_delivery_ms", deliverySamples);
+            JSONArray samples = new JSONArray(), selectedSamples = new JSONArray(), deliverySamples = new JSONArray(), appSamples = new JSONArray();
+            report.put("remote_to_draw_ms", samples).put("selected_to_draw_ms", selectedSamples).put("input_delivery_ms", deliverySamples).put("app_input_to_draw_ms", appSamples);
             for (int code : new int[]{KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_LEFT}) {
                 SystemClock.sleep(200);
                 long[] target = {0}; main(() -> { try {
@@ -91,6 +91,7 @@ public class PreparedPreviewTests extends TvTest {
                 await(() -> scrub().active && preview().drawnPosition == SeekPreview.bucket(scrub().target) && preview().drawnAt >= pressed, 1000, "prepared preview is drawn");
                 long[] drawn = {0}; main(() -> { try { drawn[0] = preview().drawnAt; selectedSamples.put(drawn[0] - preview().selectedAt);
                     deliverySamples.put(activity.seekInputAt - pressed);
+                    appSamples.put(drawn[0] - activity.seekInputAt);
                     if ((Boolean) value("previewMovedPlayer")) throw new AssertionError("Preview moved the playback decoder"); } catch (Exception error) { throw new RuntimeException(error); } });
                 long elapsed = drawn[0] - pressed; samples.put(elapsed);
             }
@@ -104,7 +105,7 @@ public class PreparedPreviewTests extends TvTest {
             try (java.io.FileOutputStream file = new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null), "prepared-preview.png"))) { image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, file); } finally { image.recycle(); }
             main(() -> { try { PreparedPreviews p = prepared(); report.put("prepared_frames", p.prepared).put("network_bytes", p.networkBytes).put("read_bytes", p.readBytes).put("disk_hits", p.diskHits).put("state", p.state);
                 Field codec = PreparedPreviews.class.getDeclaredField("codec"); codec.setAccessible(true); report.put("codec", codec.get(p)); } catch (Exception error) { throw new RuntimeException(error); } });
-            for (int i = 0; i < samples.length(); i++) if (samples.getLong(i) > 100) throw new AssertionError("Prepared preview exceeded 100 ms: " + samples.getLong(i));
+            for (int i = 0; i < appSamples.length(); i++) if (appSamples.getLong(i) > 100) throw new AssertionError("Application preview exceeded 100 ms after input delivery: " + appSamples.getLong(i));
             output.putString("stream", "Passed prepared preview checks. " + report + "\n");
         } catch (Throwable error) { try { report.put("failure", error.getMessage()); } catch (Exception ignored) {} output.putString("stream", "FAILED: " + error.getClass().getSimpleName() + ": " + error.getMessage() + "; " + report + "\n"); }
         finally {

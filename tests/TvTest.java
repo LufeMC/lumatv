@@ -9,9 +9,15 @@ import java.io.File;
 
 /** UI tests cannot change household preferences or Stremio library data. */
 public abstract class TvTest extends Instrumentation {
+    private boolean noticesCleared;
     @Override public void onCreate(Bundle args) { TestState.active = true; super.onCreate(args); }
     @Override public Context getTargetContext() {
         Context raw = super.getTargetContext();
+        Context app = raw.getApplicationContext();
+        if (!noticesCleared && app != null) {
+            noticesCleared = true;
+            app.getSharedPreferences(NewEpisodes.PREFS, 0).edit().clear().commit();
+        }
         return new ContextWrapper(raw) {
             @Override public SharedPreferences getSharedPreferences(String name, int mode) { return raw.getApplicationContext().getSharedPreferences(name, mode); }
             @Override public File getFilesDir() { return raw.getApplicationContext().getFilesDir(); }
