@@ -53,13 +53,16 @@ final class SourceProbe {
                     String location = connection.getHeaderField("Location"); if (location == null) return FAILED;
                     URL next = new URL(address, location); connection.disconnect(); connection = null; address = next; continue;
                 }
-                return read(connection);
+                return read(connection, source.videoSize);
             }
             return FAILED;
         } catch (Exception ignored) { return UNCERTAIN; }
         finally { if (connection != null) connection.disconnect(); active.decrementAndGet(); }
     }
     static int read(HttpURLConnection connection) {
+        return read(connection, 0);
+    }
+    static int read(HttpURLConnection connection, long expectedSize) {
         try {
             int code = connection.getResponseCode();
             if (code == 416) return UNCERTAIN;
@@ -78,6 +81,12 @@ final class SourceProbe {
             }
             if (size == 0) return FAILED;
             String start = new String(prefix, 0, Math.min(size, 512), StandardCharsets.ISO_8859_1).trim().toLowerCase(Locale.ROOT);
+            boolean playlist = start.startsWith("#extm3u") || start.contains("<mpd") || type.contains("mpegurl") || type.contains("dash+xml");
+            long actualSize = code == 200 ? connection.getContentLengthLong() : -1;
+            String range = connection.getHeaderField("Content-Range");
+            if (range != null && range.matches("(?i)bytes [0-9]+-[0-9]+/[0-9]+"))
+                try { actualSize = Long.parseLong(range.substring(range.lastIndexOf('/') + 1)); } catch (NumberFormatException ignored) {}
+            if (!playlist && expectedSize >= 10L * 1024 * 1024 && actualSize > 0 && actualSize <= 1024 * 1024 && actualSize < expectedSize / 10) return FAILED;
             if (type.startsWith("text/") && !type.contains("mpegurl") && !start.startsWith("#extm3u") && !start.contains("<mpd")) return FAILED;
             if (start.startsWith("<html") || start.startsWith("<!doctype html") || start.startsWith("<error") || start.startsWith("{\"") || start.startsWith("torrent download failed")) return FAILED;
             return AVAILABLE;

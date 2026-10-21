@@ -84,6 +84,7 @@ final class CodecSupport {
     static String unsupported(String text, int quality, Device d) {
         String t = text == null ? "" : text.toLowerCase(Locale.ROOT);
         boolean hdr = HDR.matcher(t).find(), tenBit = TEN_BIT.matcher(t).find();
+        if (quality >= 2160 && !d.avc4k && !d.hevc4k && !d.dolbyVision && !(d.av1 && d.av1Hardware)) return "4K";
         // Dolby Vision with an HDR10 base layer (profile 8, "DV HDR10") falls back to HDR10 on other TVs.
         if (DV.matcher(t).find() && !d.dolbyVision) {
             if (!hdr) return DOLBY_VISION;

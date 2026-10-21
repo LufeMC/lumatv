@@ -85,6 +85,10 @@ public class PlayerFlowTests extends TvTest {
             main(() -> call("chooseSource", new Class<?>[0])); shot("player-sources"); key(KeyEvent.KEYCODE_BACK);
             main(() -> call("playbackOptions", new Class<?>[0])); shot("player-more"); key(KeyEvent.KEYCODE_BACK);
             main(() -> { PlaybackSession.current.sources.add(source); set("failure", "silent"); call("showRecover", new Class<?>[0]); });
+            await(() -> ((PlayerScreens.Recover) value("recover")).choose.getVisibility() == View.GONE
+                    && ((PlayerScreens.Recover) value("recover")).line.getVisibility() == View.GONE
+                    && ((View) ((PlayerScreens.Recover) value("recover")).dashes.getParent()).getVisibility() == View.GONE,
+                    "automatic recovery hides source choices and attempt details");
             shot("player-recover");
             main(() -> { ((View) value("recover")).setVisibility(View.GONE); PlaybackSession.current.sources.remove(1); set("failure", ""); });
             main(() -> call("togglePause", new Class<?>[0]));
@@ -149,6 +153,21 @@ public class PlayerFlowTests extends TvTest {
             shot("player-subtitles-synced");
             main(() -> call("undoSync", new Class<?>[0]));
             await(() -> ((SubtitleCues) value("externalCues")).scale == 1 && ((View) value("synced")).getVisibility() != View.VISIBLE, "Undo restores subtitle speed");
+            java.io.File failedSubtitle = new java.io.File(fixtures, "provider-error.srt");
+            java.nio.file.Files.write(failedSubtitle.toPath(), ("1\n00:00:00,000 --> 01:00:00,000\nSomething went wrong, please try again. Contact support@subtito.com if this issue persists.\n")
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            AddonSubtitles.Subtitle invalid = new AddonSubtitles.Subtitle(); invalid.url = android.net.Uri.fromFile(failedSubtitle).toString(); invalid.language = "en"; invalid.name = "Invalid test subtitle";
+            AddonSubtitles.Subtitle valid = new AddonSubtitles.Subtitle(); valid.url = android.net.Uri.fromFile(new java.io.File(fixtures, "subtitle-en.srt")).toString(); valid.language = "en"; valid.name = "Valid test subtitle";
+            main(() -> {
+                call("subtitlesOff", new Class<?>[]{boolean.class}, false); set("wantText", "en"); set("textDecided", true); set("autoSubtitleDone", false);
+                java.util.List<AddonSubtitles.Subtitle> list = (java.util.List<AddonSubtitles.Subtitle>) value("externalSubtitles"); list.clear(); list.add(invalid); list.add(valid);
+                call("autoSubtitle", new Class<?>[0]);
+            });
+            await(() -> value("external") == valid && value("externalCues") != null
+                    && ((SubtitleCues) value("externalCues")).text[0].contains("Subtitle test"), "a subtitle-service error triggers automatic fallback");
+            main(() -> { source.filename = "Another.Release.720p.mkv"; call("open", new Class<?>[]{AddonStreams.Source.class}, source); });
+            await(() -> player() != null && (Boolean) value("sourceValidated") && value("external") == null && value("externalCues") == null,
+                    "a replacement release cannot retain the previous subtitle file");
             main(() -> set("externalCues", original[0]));
 
             // Credits: Up next with a countdown; the card turns into Up next.

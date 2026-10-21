@@ -18,7 +18,7 @@ final class AddonSubtitles {
         /** The subtitle's own label ("SDH") and the add-on that offered it ("OpenSubtitles"). */
         String label = "", addon = "", release = "";
         /** Timed to this exact file: a hash match (the add-on says so), or the same release name. */
-        boolean matched, hashMatch;
+        boolean matched, hashMatch, otherEpisode;
         /** The add-on's own order, and the rank from it (see rank()). */
         int order, score;
     }
@@ -26,7 +26,7 @@ final class AddonSubtitles {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Object[]> eldest) { return size() > 4; }
     };
     private static String key(String id, AddonStreams.Source source) {
-        return id + "\n" + (source == null ? "" : source.videoHash + "\n" + source.videoSize);
+        return id + "\n" + (source == null ? "" : source.release() + "\n" + source.videoSize);
     }
     /** A list loaded in the last 15 minutes for this video and file (warmed or prefetched), or null. */
     static List<Subtitle> cached(String id, AddonStreams.Source source) {
@@ -133,10 +133,12 @@ final class AddonSubtitles {
             int shared = 0;
             for (String t : tokens(s.release == null ? "" : s.release)) if (tokens.contains(t)) shared++;
             boolean sameRelease = shared >= 3;
+            s.otherEpisode = source != null && AddonStreams.otherEpisode(s.release, source.videoId);
             s.matched = s.hashMatch || sameRelease;
             String label = s.label.toLowerCase(Locale.ROOT);
             s.score = -s.order + (s.hashMatch ? 200000 : 0) + (sameRelease ? 100000 : 0) + shared * 1000
-                    - (label.contains("forced") || label.contains("sdh") || label.contains("hi") && label.length() <= 3 ? 500 : 0);
+                    - (label.contains("forced") || label.contains("sdh") || label.contains("hi") && label.length() <= 3 ? 500 : 0)
+                    - (s.otherEpisode ? 1000000 : 0);
         }
         subtitles.sort((a, b) -> Integer.compare(b.score, a.score));
     }

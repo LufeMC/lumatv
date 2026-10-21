@@ -44,7 +44,7 @@ public class PlayerFailureTests extends TvTest {
         Bundle output = new Bundle();
         try {
             Ui.init(getTargetContext()); getUiAutomation();
-            startActivitySync(new Intent(getTargetContext(), HomeActivity.class).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            startActivitySync(new Intent(getTargetContext(), HomeActivity.class).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             SystemClock.sleep(500); WatchSnapshot.capture(getTargetContext());
             anchor = (SourcesActivity) startActivitySync(new Intent(getTargetContext(), SourcesActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     .putExtra("title_id", 1418).putExtra("title_kind", "tv").putExtra("title_name", "Playback test"));
@@ -79,6 +79,18 @@ public class PlayerFailureTests extends TvTest {
             waitFor(() -> !getTargetContext().getSharedPreferences("playback-progress", 0).contains("tt0000009") || getTargetContext().getSharedPreferences("playback-progress", 0).getLong("tt0000009", 0) < 5000, "placeholder does not replace saved progress");
             waitFor(() -> player().getDuration() > 1000000, "accepted source has the expected full duration");
             waitFor(() -> field("videoRendered").getBoolean(activity) && field("audioAdvancing").getBoolean(activity), "accepted source has decoded video and advancing audio output");
+            close(); queue.clear(); queue.add(source("two-minute-error.mkv")); queue.add(source("verified.mkv"));
+            launch(queue, false, 1140000);
+            waitFor(() -> PlaybackSession.current.index == 1 && player() != null && player().isPlaying()
+                    && field("sourceValidated").getBoolean(activity), "the exact two-minute error video triggers automatic source recovery");
+            waitFor(() -> PlaybackSession.current.failureNotes.toString().contains("duration=120000"), "the rejected duration is recorded");
+            close(); queue.clear(); queue.add(source("corrupt.mkv"));
+            PlaybackSession.current = new PlaybackSession("tt0000009", "Playback recovery test", queue, 360);
+            PlaybackSession.current.expectedDuration = 1140000;
+            PlaybackSession.current.all.add(source("verified.mkv"));
+            activity = (PlayerActivity) startActivitySync(new Intent(getTargetContext(), PlayerActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            waitFor(() -> PlaybackSession.current.sources.size() == 2 && PlaybackSession.current.index == 1 && player() != null
+                    && player().isPlaying() && field("sourceValidated").getBoolean(activity), "playback tries sources beyond its initial batch automatically");
             close(); queue.clear(); queue.add(source("sample.mkv?audio-stall")); queue.add(source("sample.mkv?audio-recovery")); launch(queue, false);
             waitFor(() -> player() != null && field("sourceValidated").getBoolean(activity), "start before missing audio output");
             runOnMainSync(() -> { try {

@@ -6,7 +6,7 @@ public class TestMediaProvider extends android.content.ContentProvider {
     @Override public android.content.res.AssetFileDescriptor openAssetFile(android.net.Uri uri, String mode) throws java.io.FileNotFoundException {
         String path = uri.getLastPathSegment();
         if ("denied.mkv".equals(path)) throw new SecurityException("Test access denied");
-        if (!"r".equals(mode) || !("sample.mkv".equals(path) || "corrupt.mkv".equals(path) || "verified.mkv".equals(path) || "video-only.mkv".equals(path) || "audio-only.mkv".equals(path) || "placeholder.mkv".equals(path) || "truncated.mkv".equals(path) || "subtitle-en.srt".equals(path) || "subtitle-es.srt".equals(path)))
+        if (!"r".equals(mode) || !("sample.mkv".equals(path) || "corrupt.mkv".equals(path) || "verified.mkv".equals(path) || "video-only.mkv".equals(path) || "audio-only.mkv".equals(path) || "placeholder.mkv".equals(path) || "two-minute-error.mkv".equals(path) || "truncated.mkv".equals(path) || "subtitle-en.srt".equals(path) || "subtitle-es.srt".equals(path)))
             throw new java.io.FileNotFoundException();
         try { return getContext().getAssets().openFd(path); }
         catch (java.io.IOException e) { throw new java.io.FileNotFoundException(); }

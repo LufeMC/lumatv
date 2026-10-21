@@ -54,8 +54,9 @@ Disconnecting the account removes its cached Stremio library from Free My TV.
 ## Automatic playback
 
 The player starts with the highest labeled resolution.
-It tries two sources at each resolution before trying a lower resolution.
-The retry plan contains no more than twelve distinct sources.
+It checks sources at the highest supported resolution before selecting a lower resolution.
+It alternates providers within each resolution.
+It adds another batch automatically when the first twelve sources fail.
 The application does not show a quality selection screen or a source list during normal playback.
 A failed source causes an automatic source change for the same movie or episode.
 A source change preserves the playback position.
@@ -165,7 +166,8 @@ Other sources allow an 800 ms opportunity for a higher resolution.
 Later results remain available for source recovery.
 Source discovery stops after 15 seconds.
 The player changes sources after eight seconds of initial buffering or twelve seconds of later buffering.
-The retry list remains limited to twelve sources.
+Each automatic batch contains up to twelve sources.
+The player adds another batch when more candidates remain.
 Failed sources do not receive additional Media3 retries before the application tries another source.
 
 The deployment guide includes Android code compilation and repeatable startup measurements.
@@ -173,22 +175,43 @@ See `PERFORMANCE.md` for the results and test conditions.
 
 ## Verify a playback source
 
-The application checks up to two sources in parallel before playback.
-Each check requests the first 4 KiB.
+Four workers check sources in parallel before playback.
+Each check uses one bounded media reader for the response prefix and container headers.
 The checks reject HTTP failures, empty responses, and obvious text error responses.
 A timeout or unsupported byte range permits later player verification.
-The checks follow at most three HTTPS redirects.
+The metadata check reads Matroska or MP4 headers without allocating a playback decoder.
+It checks runtime, video tracks, audio tracks, and compatible decoders.
+Matroska checks stop before samples and large attachments when the headers contain the runtime.
+Each metadata check has a 2 MiB network limit and a bounded deadline.
+The workers prepare up to twelve candidates ahead.
+If an equal-resolution candidate passes first, playback can start without waiting for a slower check.
+Successful playback cancels unfinished checks.
 The application decodes one source at a time.
+Preparation can use a separate 4 KiB response check before caching the first media bytes.
+Playback shares pending add-on requests with preparation instead of issuing duplicate requests.
+An automatic Resume request starts preparation while the title page loads.
+Episode focus starts preparation after 750 milliseconds without another focus change.
 
 The player compares the available duration with the expected movie or episode runtime.
 If the expected runtime is at least ten minutes, the player checks for a short placeholder.
-It rejects clips shorter than two minutes and one-fifth of the expected runtime.
+It rejects clips of two minutes or less when they are also shorter than one-fifth of the expected runtime.
 The player rejects audio-only sources.
 It requires a rendered video frame and advancing audio output before it records playback progress.
 If either output check fails within eight seconds, it tries another source.
 A black cover hides rejected clips while the player changes sources.
 An error clip cannot mark the episode complete.
 These checks cannot prove the semantic content of every video.
+
+Automatic recovery shows a loading message without source counts or source-selection controls.
+The final failure state provides retry and return actions.
+
+Subtitle lists and captions belong to the selected release.
+Changing the release clears captions from the previous release.
+Late subtitle responses cannot replace the current release's list.
+Automatic selection excludes subtitles explicitly labeled for another episode.
+The parser rejects the observed subtitle-service error message.
+If a subtitle file fails, automatic selection tries the next matching language.
+Subtitle requests start after video and audio verification, unless preparation already cached the list.
 
 The default audio language is English.
 Use Audio in the player to select another available language.

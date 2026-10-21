@@ -15,10 +15,15 @@ final class PreviewReader extends android.media.MediaDataSource {
     private DataSource input;
     private long size = -1, cursor = -1, memoryAt;
     static final class Budget {
+        final long limit;
+        final long memoryFloor;
+        Budget() { this(16L * 1024 * 1024); }
+        Budget(long limit) { this(limit, 445L * 1024 * 1024); }
+        Budget(long limit, long memoryFloor) { this.limit = limit; this.memoryFloor = memoryFloor; }
         long started = SystemClock.elapsedRealtime(), bytes;
         synchronized boolean exceeded(long now) {
             if (now - started >= 60000) { started = now; bytes = 0; }
-            return bytes > 16L * 1024 * 1024;
+            return bytes > limit;
         }
         synchronized void transferred(int count) { bytes += count; }
     }
@@ -39,12 +44,13 @@ final class PreviewReader extends android.media.MediaDataSource {
     }
     private void check() throws IOException {
         long now = SystemClock.elapsedRealtime();
+        if (Thread.currentThread().isInterrupted()) fail("closed");
         if (stopped) fail("closed");
         if (now > deadline) fail("deadline");
         if (budget.exceeded(now)) fail("network_budget");
         if (now - memoryAt > 1000) {
             memoryAt = now; android.app.ActivityManager.MemoryInfo info = new android.app.ActivityManager.MemoryInfo(); memory.getMemoryInfo(info);
-            if (info.availMem < 445L * 1024 * 1024) fail("memory");
+            if (info.availMem < budget.memoryFloor) fail("memory");
         }
     }
     void verify() throws IOException { if (!reason.isEmpty()) throw new IOException("preview_" + reason); if (stopped) fail("closed"); }

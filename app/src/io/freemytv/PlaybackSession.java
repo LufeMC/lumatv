@@ -13,7 +13,7 @@ import org.json.JSONObject;
 final class PlaybackSession {
     static PlaybackSession current;
     final String videoId, title;
-    /** The automatic queue (at most 12). */
+    /** Automatic candidate batches, with at most twelve entries per batch. */
     final List<AddonStreams.Source> sources;
     /** Every source found for this video, for "Choose a source" (including ones this TV can't play). */
     final List<AddonStreams.Source> all = new ArrayList<>();
@@ -38,13 +38,14 @@ final class PlaybackSession {
         for (AddonStreams.Source s : found) if (all.size() < 400 && seen.add(s.url)) all.add(s);
     }
     void updateSources(List<AddonStreams.Source> available, boolean pending) {
+        int capacity = Math.max(PlaybackPlan.LIMIT, sources.size());
         java.util.Set<String> tried = new java.util.HashSet<>();
         int keep = Math.min(index + 1, sources.size());
         for (int i = 0; i < keep; i++) tried.add(sources.get(i).url);
         List<AddonStreams.Source> candidates = new ArrayList<>();
         for (AddonStreams.Source source : available) if (!tried.contains(source.url)) candidates.add(source);
         while (sources.size() > keep) sources.remove(sources.size() - 1);
-        for (AddonStreams.Source source : PlaybackPlan.automatic(candidates)) if (sources.size() < PlaybackPlan.LIMIT) sources.add(source);
+        for (AddonStreams.Source source : PlaybackPlan.automatic(candidates)) if (sources.size() < capacity) sources.add(source);
         addAll(available);
         discovering = pending;
         if (sourcesChanged != null) sourcesChanged.run();

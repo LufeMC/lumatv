@@ -52,7 +52,7 @@ public class EpisodeFlowTests extends TvTest {
                 set(title, "generation", (Integer) value(title, "generation") + 1);
                 for (java.util.concurrent.Future<?> request : (List<java.util.concurrent.Future<?>>) value(title, "sourceRequests")) request.cancel(true);
                 ((List<?>) value(title, "sourceRequests")).clear();
-                set(title, "remaining", 0); set(title, "probing", 0); set(title, "episodes", false); set(title, "pendingPlay", false);
+                set(title, "remaining", 0); set(title, "episodes", false); set(title, "pendingPlay", false);
                 set(title, "season", 9); set(title, "focusedEpisode", episode); set(title, "videoId", "tt0898266:9:" + episode);
                 set(title, "videoTitle", "The Big Bang Theory · S9 E" + episode);
                 AddonStreams.Source source = new AddonStreams.Source(); source.url = android.net.Uri.fromFile(new java.io.File(getTargetContext().getCacheDir(), "episode-test.mkv")).toString();

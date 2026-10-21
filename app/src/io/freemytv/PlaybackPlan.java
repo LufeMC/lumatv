@@ -4,9 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The automatic source queue: the release that played last time for this show first, then two sources at each
- * resolution before trying a lower one. Sources this TV can't decode are left out while others exist, and files that
- * name another episode (or two episodes) go to the back.
+ * Order sources by supported resolution, then alternate providers within each resolution.
+ * Prefer the remembered release within its resolution.
+ * Put files for another episode at the end.
  */
 final class PlaybackPlan {
     static final int LIMIT = 12;
@@ -43,7 +43,25 @@ final class PlaybackPlan {
         List<AddonStreams.Source> ordered = new ArrayList<>(result.size());
         for (AddonStreams.Source source : result) if (!source.otherEpisode) ordered.add(source);
         for (AddonStreams.Source source : result) if (source.otherEpisode) ordered.add(source);
-        return new ArrayList<>(ordered.subList(0, Math.min(LIMIT, ordered.size())));
+        ordered.sort((a, b) -> a.otherEpisode != b.otherEpisode ? Boolean.compare(a.otherEpisode, b.otherEpisode)
+                : Integer.compare(b.quality, a.quality));
+        List<AddonStreams.Source> diverse = new ArrayList<>();
+        for (int start = 0; start < ordered.size();) {
+            AddonStreams.Source first = ordered.get(start); int end = start;
+            java.util.Map<String, java.util.ArrayDeque<AddonStreams.Source>> providers = new java.util.LinkedHashMap<>();
+            while (end < ordered.size() && ordered.get(end).quality == first.quality && ordered.get(end).otherEpisode == first.otherEpisode) {
+                AddonStreams.Source source = ordered.get(end++);
+                providers.computeIfAbsent(source.addon, key -> new java.util.ArrayDeque<>()).add(source);
+            }
+            boolean added;
+            do {
+                added = false;
+                for (java.util.ArrayDeque<AddonStreams.Source> provider : providers.values())
+                    if (!provider.isEmpty()) { diverse.add(provider.removeFirst()); added = true; }
+            } while (added);
+            start = end;
+        }
+        return new ArrayList<>(diverse.subList(0, Math.min(LIMIT, diverse.size())));
     }
 
     // Memory for rewinding shares the player's 20 MB limit with the video loaded ahead. Keep it to a quarter.

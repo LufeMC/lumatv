@@ -12,6 +12,14 @@
     <instrumentation android:name="io.freemytv.PortugueseLayoutTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.FocusRecoveryTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.HouseholdState" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+    <instrumentation android:name="io.freemytv.PlaybackDiagnostics" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+    <instrumentation android:name="io.freemytv.ReportedEpisodeTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.ParallelSourceTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+    <instrumentation android:name="io.freemytv.AddonRequestTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+    <instrumentation android:name="io.freemytv.SourceRaceTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.SubtitleModesTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.RemoteServiceTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
+    <instrumentation android:name="io.freemytv.StremioProgressTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
     <instrumentation android:name="io.freemytv.DesignReviewTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.HomeControlsTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.PhoneLinkTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />

@@ -1,6 +1,7 @@
 # LumaTV improvements
 
-55 improvements were approved on October 20. Implementation and verification are in progress.
+The source includes the 55 improvements approved on October 20.
+Verification continues after reported playback failures.
 See [VERIFICATION.md](VERIFICATION.md) for the current evidence and remaining limits.
 
 ## Your list (21)

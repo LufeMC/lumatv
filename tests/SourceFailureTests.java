@@ -82,6 +82,9 @@ public class SourceFailureTests extends TvTest {
             thumbnail.recycle();
             check(ThumbnailCache.read("https://example.com/not-cached") == null, "missing artwork cache permits normal loading");
             check(PlaybackValidation.shortPlaceholder(1200000, 30000), "thirty-second provider error clip is rejected");
+            check(PlaybackValidation.shortPlaceholder(1140000, 120000), "the reported two-minute error video is rejected");
+            check(PlaybackValidation.shortPlaceholder(1200000, 119999), "a clip below the boundary is rejected");
+            check(!PlaybackValidation.shortPlaceholder(120000, 120000), "a legitimate two-minute title remains available");
             check(!PlaybackValidation.shortPlaceholder(60000, 30000), "legitimate short title remains available");
             check(!PlaybackValidation.shortPlaceholder(1200000, 1190000), "normal episode duration is accepted");
             check(!PlaybackValidation.shortPlaceholder(1200000, -1), "unknown live duration is not misclassified");
@@ -93,6 +96,14 @@ public class SourceFailureTests extends TvTest {
             check(SourceProbe.read(response(416, bytes(""), 0)) == SourceProbe.UNCERTAIN, "range refusal permits player verification");
             check(SourceProbe.read(response(206, new ByteArrayInputStream(new byte[4096]), -1)) == SourceProbe.AVAILABLE, "source probe accepts binary partial response");
             check(SourceProbe.read(response(200, bytes("#EXTM3U\n#EXT-X-VERSION:3"), -1)) == SourceProbe.AVAILABLE, "source probe accepts an HLS playlist");
+            check(SourceProbe.read(response(200, new ByteArrayInputStream(new byte[4096]), 4096), 100_000_000) == SourceProbe.FAILED,
+                    "a small binary response cannot replace a large advertised episode");
+            check(SourceProbe.read(response(200, bytes("#EXTM3U\n#EXT-X-VERSION:3"), 25), 100_000_000) == SourceProbe.AVAILABLE,
+                    "a small HLS playlist remains valid for a large episode");
+            check(SourceProbe.read(response(200, bytes("<MPD></MPD>"), 11), 100_000_000) == SourceProbe.AVAILABLE,
+                    "a small DASH playlist remains valid for a large episode");
+            check(SourceProbe.read(response(200, new ByteArrayInputStream(new byte[4096]), -1), 100_000_000) == SourceProbe.AVAILABLE,
+                    "an unknown response size permits media validation");
             check(SourceProbe.read(response(200, new InputStream() { public int read() throws java.io.IOException { throw new java.net.SocketTimeoutException(); } }, -1)) == SourceProbe.UNCERTAIN, "probe timeout does not discard an unverified source");
             String stamp = LibrarySync.fingerprint(new JSONArray("[[\"tt123\",1000],[\"tt456\",2000]]"));
             check(stamp.equals(LibrarySync.fingerprint(new JSONArray("[[\"tt456\",2000],[\"tt123\",1000]]"))), "library order does not force a full download");

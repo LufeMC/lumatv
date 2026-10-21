@@ -117,6 +117,7 @@ final class AddonStreams {
     // Answers fetched ahead of time (PlaybackPrefetch) wait in memory for the start that needs them, used once, so
     // a warmed or prefetched video starts without asking again while "Try again" still asks afresh.
     private static final long FRESH_MS = 15 * 60000L;
+    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.FutureTask<JSONArray>> inFlight = new java.util.concurrent.ConcurrentHashMap<>();
     private static final Map<String, Object[]> responses = new LinkedHashMap<String, Object[]>(16, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Object[]> eldest) { return size() > 40; }
     };
@@ -130,7 +131,10 @@ final class AddonStreams {
             Object[] saved = responses.remove(key);
             if (saved != null && android.os.SystemClock.elapsedRealtime() - (Long) saved[0] < FRESH_MS) streams = (JSONArray) saved[1];
         }
-        if (streams == null) streams = request(addon, type, id);
+        if (streams == null) {
+            streams = request(addon, type, id);
+            synchronized (responses) { responses.remove(key); }
+        }
         Result result = parse(streams, addon.name, id);
         remember(id, result.sources);
         return result;
@@ -138,14 +142,28 @@ final class AddonStreams {
     /** Asks the add-on now and keeps the answer for the next fetch() of this video (prefetching). */
     static Result prefetch(Addon addon, String type, String id) throws Exception {
         JSONArray streams = request(addon, type, id);
-        synchronized (responses) { responses.put(addon.address + "\n" + type + "\n" + id, new Object[]{android.os.SystemClock.elapsedRealtime(), streams}); }
         Result result = parse(streams, addon.name, id);
         remember(id, result.sources);
         return result;
     }
     private static JSONArray request(Addon addon, String type, String id) throws Exception {
-        JSONArray streams = MediaHttp.json(endpoint(addon.address, type, id), null, 12000).optJSONArray("streams");
-        return streams == null ? new JSONArray() : streams;
+        String key = addon.address + "\n" + type + "\n" + id;
+        return sharedRequest(key, () -> {
+            JSONArray loaded = MediaHttp.json(endpoint(addon.address, type, id), null, 12000).optJSONArray("streams");
+            JSONArray streams = loaded == null ? new JSONArray() : loaded;
+            synchronized (responses) { responses.put(key, new Object[]{android.os.SystemClock.elapsedRealtime(), streams}); }
+            return streams;
+        });
+    }
+    static JSONArray sharedRequest(String key, java.util.concurrent.Callable<JSONArray> load) throws Exception {
+        java.util.concurrent.FutureTask<JSONArray> task = new java.util.concurrent.FutureTask<>(load);
+        java.util.concurrent.FutureTask<JSONArray> running = inFlight.putIfAbsent(key, task);
+        boolean owner = running == null;
+        if (owner) { running = task; task.run(); }
+        try { return running.get(); }
+        catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new Exception("network"); }
+        catch (java.util.concurrent.ExecutionException error) { throw new Exception("network"); }
+        finally { if (owner) inFlight.remove(key, task); }
     }
     /** True when the add-on's answer for this video is already in memory (warmed or prefetched). */
     static boolean cached(Addon addon, String type, String id) {

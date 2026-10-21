@@ -112,6 +112,8 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
     private SharedPreferences preferences;
     private long bufferingSince, hideAt, lastSave, sourceOpenedAt, watchedMs, lastTick;
     private int generation, attempts;
+    private int selectionToken;
+    private ParallelSourceChecks sourceChecks;
     private boolean started, wanted = true, choosing, userSeeking, exhausted, waitingForSources, sourceValidated, placeholder;
     private String failure = "", showTitle = "", episodeLine = "";
 
@@ -134,6 +136,8 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
     private final List<String> visibleLines = new ArrayList<>();
     private String shownLines = "";
     private String release = "";
+    private int subtitleListGeneration = -1;
+    private final java.util.Set<String> rejectedSubtitles = new java.util.HashSet<>();
     private long replayUntil = -1;
     private final SubtitleSync sync = new SubtitleSync();
     private boolean syncSolving, syncDone, syncDrift;
@@ -207,7 +211,6 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         else session.position = session.resumePosition >= 0 ? session.resumePosition : getSharedPreferences("playback-progress", 0).getLong(session.videoId, 0);
         decideSubtitles();
         loadNextEpisode();
-        loadSubtitles(session.sources.get(0));
         PlaybackLog.add(this, "Playing " + session.videoId + " · " + session.sources.size() + " sources queued");
     }
 
@@ -274,6 +277,8 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         main.post(tick);
     }
     @Override protected void onStop() {
+        selectionToken++;
+        if (sourceChecks != null) { sourceChecks.close(); sourceChecks = null; }
         activityVisible = false; if (mediaSession != null) mediaSession.setActive(false);
         QuickPanel.detach(this);
         unregisterNetwork();
@@ -440,6 +445,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
 
     private void next() {
         AddonStreams.Source source = session.next();
+        if (source == null && session.hasMore() && session.queueMore()) source = session.next();
         if (source == null && session.discovering) {
             waitingForSources = true; exhausted = false; buffering.setVisibility(View.VISIBLE); return;
         }
@@ -448,7 +454,38 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
             buffering.setVisibility(View.GONE);
             exhausted = true; showExhausted(); return;
         }
-        attempts++; open(source);
+        attempts++;
+        if (!MediaHttp.https(source.url)) { open(source); return; }
+        if (sourceChecks == null) sourceChecks = new ParallelSourceChecks(this);
+        final AddonStreams.Source selected = source;
+        final int token = ++selectionToken;
+        final java.util.concurrent.Future<ParallelSourceChecks.Result> check = sourceChecks.prepare(source, session.expectedDuration);
+        for (int i = session.index + 1; i < Math.min(session.sources.size(), session.index + PlaybackPlan.LIMIT); i++)
+            sourceChecks.prepare(session.sources.get(i), session.expectedDuration);
+        final long deadline = SystemClock.elapsedRealtime() + ParallelSourceChecks.TIMEOUT_MS;
+        showRecover();
+        main.post(new Runnable() { @Override public void run() {
+            if (!started || token != selectionToken) return;
+            if (!ParallelSourceChecks.ready(check)) {
+                for (int at = session.index + 1; at < Math.min(session.sources.size(), session.index + PlaybackPlan.LIMIT); at++) {
+                    AddonStreams.Source alternate = session.sources.get(at);
+                    if (alternate.quality != selected.quality || alternate.otherEpisode != selected.otherEpisode) break;
+                    if (sourceChecks.ready(alternate, session.expectedDuration)) {
+                        Collections.swap(session.sources, session.index, at);
+                        open(alternate); return;
+                    }
+                }
+            }
+            if (!check.isDone() && SystemClock.elapsedRealtime() < deadline) { main.postDelayed(this, 50); return; }
+            ParallelSourceChecks.Result result = new ParallelSourceChecks.Result(SourceProbe.UNCERTAIN, "unverified");
+            try { if (check.isDone()) result = check.get(); else check.cancel(true); } catch (Exception ignored) {}
+            if (result.state == SourceProbe.FAILED) {
+                selected.probeState = SourceProbe.FAILED;
+                session.failure("preflight:" + result.reason);
+                session.outcome.put(selected.url, "failed:" + result.reason);
+                failure = result.reason; next();
+            } else open(selected);
+        } });
     }
     private void open(AddonStreams.Source source) {
         int request = ++generation;
@@ -456,7 +493,13 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         main.removeCallbacks(advanceEpisode); surface.setAlpha(1); loadingCover.setVisibility(View.VISIBLE); subtitles.setVisibility(View.VISIBLE);
         frozenVideo.setVisibility(View.GONE); frozenVideo.setImageDrawable(null); exhausted = false; autoSubtitleDone = false;
         bufferingSince = SystemClock.elapsedRealtime(); sourceOpenedAt = bufferingSince;
-        release = source.release(); sync.reset(); syncSolving = false; syncTask++;
+        String nextRelease = source.release();
+        if (!release.equals(nextRelease)) {
+            external = null; externalCues = null; cueCache = null; shownLines = "";
+            externalSubtitles.clear(); rejectedSubtitles.clear(); subtitles.setCues(Collections.emptyList());
+            main.removeCallbacks(cueTick); replayUntil = -1;
+        }
+        release = nextRelease; sync.reset(); syncSolving = false; syncTask++;
         if (externalCues != null) { externalCues.offset = Prefs.subtitleOffset(this, release); syncDrift = false; }
         session.outcome.put(source.url, "trying");
         PlaybackLog.add(this, "Trying source " + (session.index + 1) + "/" + session.sources.size() + " · " + source.shortQuality() + " · " + source.addon);
@@ -573,6 +616,7 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         if (rejectPlaceholder(request)) return;
         if (!sourceValidated) {
             sourceValidated = true; failure = "";
+            if (sourceChecks != null) sourceChecks.cancelPending();
             if (!source.url.equals(playedUrl)) {
                 playedUrl = source.url;
                 PlaybackMemory.rememberSource(this, session.videoId, source);
@@ -988,16 +1032,20 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
                     && (group.getTrackFormat(i).selectionFlags & C.SELECTION_FLAG_FORCED) == 0) { autoSubtitleDone = true; return; }
         if (externalSubtitles.isEmpty()) return;   // tried again when the list arrives
         autoSubtitleDone = true;
-        for (AddonSubtitles.Subtitle s : externalSubtitles) if (AddonSubtitles.sameLanguage(s.language, wantText)) { useExternal(s, false); return; }
+        for (AddonSubtitles.Subtitle s : externalSubtitles)
+            if (!s.otherEpisode && !rejectedSubtitles.contains(s.url) && AddonSubtitles.sameLanguage(s.language, wantText)) { useExternal(s, false); return; }
     }
     private void loadSubtitles(AddonStreams.Source source) {
+        final int request = generation;
+        if (subtitleListGeneration == request) return;
+        subtitleListGeneration = request;
         final String video = session.videoId;
         network.execute(() -> {
             List<AddonSubtitles.Subtitle> loaded = new ArrayList<>();
             try { loaded = AddonSubtitles.load(this, video, source); } catch (Exception ignored) {}
             final List<AddonSubtitles.Subtitle> result = loaded;
             main.post(() -> {
-                if (isDestroyed() || result.isEmpty()) return;
+                if (isDestroyed() || request != generation || result.isEmpty()) return;
                 java.util.Set<String> seen = new java.util.HashSet<>(); for (AddonSubtitles.Subtitle s : externalSubtitles) seen.add(s.url);
                 for (AddonSubtitles.Subtitle s : result) if (seen.add(s.url)) externalSubtitles.add(s);
                 autoSubtitle();
@@ -1017,7 +1065,11 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
             final SubtitleCues result = cues;
             main.post(() -> {
                 if (isDestroyed() || external != subtitle) return;
-                if (result == null) { PlaybackLog.add(this, "Add-on subtitle could not be read"); external = null; applyTextParameters(); return; }
+                if (result == null) {
+                    PlaybackLog.add(this, "Add-on subtitle could not be read");
+                    rejectedSubtitles.add(subtitle.url); external = null; autoSubtitleDone = false;
+                    applyTextParameters(); autoSubtitle(); return;
+                }
                 result.offset = Prefs.subtitleOffset(this, release);
                 externalCues = result; cueCache = new Cue[result.size()];
                 if (sourceValidated) startSync();
@@ -1393,27 +1445,25 @@ public class PlayerActivity extends TvActivity implements QuickPanel.Host {
         }
     }
     private void showRecover() {
-        if (session.index + 1 >= session.sources.size() && !session.discovering) return;   // showExhausted follows
         hideControls(); introActions.setVisibility(View.GONE);
         if (upNextShown) closeUpNext();
         recover.more.setVisibility(View.GONE); recover.retry.setVisibility(View.GONE); recover.stremio.setVisibility(View.GONE);
-        recover.title.setText(Ui.tr("Trocando de fonte", "Switching to another source"));
-        String reason = reasonLine();
-        String resume = session.position > 5000 ? String.format(Ui.tr("Você continua em %s.", "You’ll pick up at %s."), SeekPreview.clock(session.position)) : "";
-        recover.line.setText((reason + " " + resume).trim());
-        recover.line.setVisibility(recover.line.getText().length() == 0 ? View.GONE : View.VISIBLE);
-        recover.spinner.setVisibility(View.VISIBLE); ((View) recover.dashes.getParent()).setVisibility(View.VISIBLE);
+        recover.title.setText(Ui.tr("Iniciando reprodução", "Starting playback"));
+        recover.line.setVisibility(View.GONE);
+        recover.choose.setVisibility(View.GONE);
+        recover.spinner.setVisibility(View.VISIBLE); ((View) recover.dashes.getParent()).setVisibility(View.GONE);
         int nextIndex = Math.min(session.index + 1, session.sources.size() - 1);
         recover.sources(nextIndex, session.sources.size(), nextIndex >= 0 ? session.sources.get(nextIndex).shortQuality() : "");
         boolean wasVisible = recover.getVisibility() == View.VISIBLE;
         recover.setVisibility(View.VISIBLE); buffering.setVisibility(View.GONE);
-        if (!wasVisible || !recover.hasFocus()) recover.choose.requestFocus();
+        if (!wasVisible || !recover.hasFocus()) recover.back.requestFocus();
     }
     private void showExhausted() {
         hideControls(); introActions.setVisibility(View.GONE);
         if (upNextShown) closeUpNext();
-        recover.title.setText(Ui.tr("Nenhuma fonte reproduziu", "None of the sources played"));
-        recover.line.setText(String.format(Ui.tr("%d tentadas. Escolha uma ou tente de novo mais tarde.", "Tried %d. Choose one, or try again later."), Math.max(1, session.sources.size())));
+        recover.title.setText(Ui.tr("Não foi possível iniciar a reprodução", "Playback could not start"));
+        recover.line.setText(Ui.tr("Tente novamente ou volte aos episódios.", "Try again, or return to episodes."));
+        recover.choose.setVisibility(View.VISIBLE);
         recover.line.setVisibility(View.VISIBLE);
         recover.spinner.setVisibility(View.GONE); ((View) recover.dashes.getParent()).setVisibility(View.GONE);
         recover.more.setVisibility(session.hasMore() ? View.VISIBLE : View.GONE);

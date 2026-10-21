@@ -89,6 +89,8 @@ No screenshot is a claim that every external service will return the same data.
 - Removed the duplicate clear control from phone search.
 - Added an explicit phone artwork fallback.
 - Checked Portuguese controls and the optional day appearance.
+- Removed source counts and source choices from automatic recovery, following the latest user instruction.
+- Retained a loading indicator and the return action during automatic source checks.
 
 ## Platform limits
 
@@ -97,7 +99,8 @@ Its automatic source queue excludes those unsupported variants.
 Its display offers no mode that matches 24-fps playback.
 The player preserves the current display mode when a matching mode is unavailable.
 
-Two-physical-TV activation remains outside the current authorized device scope.
+The user authorized a Hisense update after the second TV passes the current tests.
+Active testing remains on the second TV.
 The encrypted signing backup has a verified private off-computer copy.
 Separate recovery-password storage remains pending.
 These external actions remain recorded in [VERIFICATION.md](VERIFICATION.md).

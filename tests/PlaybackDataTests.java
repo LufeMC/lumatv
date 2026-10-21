@@ -54,6 +54,8 @@ public class PlaybackDataTests extends TvTest {
             check(CodecSupport.unsupported("Movie 1080p x264 DVDRip", 1080, plain) == null, "H.264 plays; DVDRip is not DV");
             check(CodecSupport.AVC.equals(CodecSupport.unsupported("Movie 2160p x264", 2160, plain)), "4K AVC needs a matching decoder");
             plain.avc4k = true;
+            CodecSupport.Device no4k = new CodecSupport.Device(); no4k.hevc = true;
+            check("4K".equals(CodecSupport.unsupported("2160p WEB", 2160, no4k)), "unknown-codec 4K is rejected when no 4K decoder exists");
             check(CodecSupport.unsupported("Movie 2160p x264", 2160, plain) == null, "a supported 4K AVC source remains eligible");
             CodecSupport.Device rich = new CodecSupport.Device(); rich.hevc = rich.hevcMain10 = rich.hevc4k = rich.av1 = true;
             check(CodecSupport.unsupported("Movie 2160p DV HDR10 HEVC", 2160, rich) == null, "DV profile 8 falls back to HDR10");
@@ -70,6 +72,12 @@ public class PlaybackDataTests extends TvTest {
             check(plan.get(plan.size() - 1) == wrong && plan.size() == 4, "another episode goes to the back, still queued");
             List<AddonStreams.Source> only = PlaybackPlan.automatic(Collections.singletonList(dv));
             check(only.size() == 1, "keep an unsupported source when it is the only one");
+            List<AddonStreams.Source> providers = new ArrayList<>();
+            for (int i = 0; i < 15; i++) providers.add(source("provider-a-" + i, 1080, "A"));
+            providers.add(source("provider-b", 1080, "B")); providers.add(source("lower", 720, "B"));
+            List<AddonStreams.Source> diverse = PlaybackPlan.automatic(providers);
+            check(diverse.get(0).addon.equals("A") && diverse.get(1).addon.equals("B") && diverse.get(1).quality == 1080,
+                    "one provider cannot occupy the start of a quality group");
             // What worked for this show comes first.
             PlaybackMemory.init(getTargetContext());
             AddonStreams.Source remembered = source("binge", 720, "B"); remembered.bingeGroup = "B|720p|group"; remembered.videoId = "tt9999901:1:2";
@@ -78,7 +86,7 @@ public class PlaybackDataTests extends TvTest {
             SystemClock.sleep(100);
             List<AddonStreams.Source> withMemory = new ArrayList<>(input); withMemory.add(remembered);
             plan = PlaybackPlan.automatic(withMemory);
-            check(plan.get(0) == remembered, "the release that played last time first");
+            check(plan.get(0).quality == 1080 && plan.indexOf(remembered) < plan.indexOf(input.get(4)), "quality comes first and the remembered release leads its quality");
             AddonStreams.Source hdB = null; for (AddonStreams.Source s : plan) if (s.name.equals("hd2")) hdB = s;
             check(plan.indexOf(hdB) < plan.indexOf(input.get(2)), "the same add-on first within a resolution");
             getTargetContext().getSharedPreferences(PlaybackMemory.FILE, 0).edit().remove("source:tt9999901").commit();
@@ -101,6 +109,10 @@ public class PlaybackDataTests extends TvTest {
             // Subtitle files.
             String srt = "1\n00:00:01,000 --> 00:00:02,500\n<i>Hello</i> there\n\n2\n00:00:03,000 --> 00:00:04,000\n{\\an8}Second\nline\n\n";
             SubtitleCues cues = SubtitleCues.parse(srt);
+            check(SubtitleCues.parse("1\n00:00:00,000 --> 01:00:00,000\nSomething went wrong, please try again. Contact support@subtito.com if this issue persists.\n") == null,
+                    "the reported subtitle-service error cannot become a subtitle");
+            check(SubtitleCues.parse("1\n00:00:01,000 --> 00:00:03,000\nSomething went wrong, please try again.\n") != null,
+                    "ordinary dialogue remains valid");
             check(cues != null && cues.size() == 2 && cues.text[0].equals("Hello there") && cues.text[1].equals("Second\nline"), "SRT without tags");
             List<String> lines = new ArrayList<>();
             cues.visible(1500, lines); check(lines.size() == 1 && lines.get(0).equals("Hello there"), "cue showing");
@@ -148,6 +160,10 @@ public class PlaybackDataTests extends TvTest {
             List<AddonSubtitles.Subtitle> ranked = new ArrayList<>(Arrays.asList(plainSub, sameRelease, hash));
             AddonSubtitles.rank(ranked, file);
             check(ranked.get(0) == hash && ranked.get(1) == sameRelease && sameRelease.matched, "hash match, then same release");
+            file.videoId = "tt9999901:1:2"; hash.release = "Show.S01E03.1080p.WEB-DL.NTB.srt";
+            AddonSubtitles.rank(ranked, file);
+            check(hash.otherEpisode && ranked.get(ranked.size() - 1) == hash,
+                    "a subtitle labeled for another episode cannot lead automatic selection");
             check(AddonSubtitles.sameLanguage("pt-BR", "por") && AddonSubtitles.sameLanguage("eng", "en") && !AddonSubtitles.sameLanguage("und", "und"), "language codes");
             JSONObject flagged = new JSONObject().put("url", "https://s.invalid/sub.srt").put("lang", "pob").put("hashMatch", true);
             check(AddonSubtitles.parse(flagged, "OpenSubtitles").matched, "add-on hash flag");

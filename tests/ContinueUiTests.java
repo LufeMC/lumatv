@@ -43,6 +43,7 @@ public class ContinueUiTests extends TvTest {
             await(()->!((List<?>)value(view,"entries")).isEmpty()&&((ContinueWatching.Entry)((List<?>)value(view,"entries")).get(0)).video.equals(entry.video),"the newest progress becomes the resume chip");
             SystemClock.sleep(4500);key(KeyEvent.KEYCODE_DPAD_DOWN);
             await(()->(Integer)value(view,"zone")==HomeView.Z_CHIP,"one Down selects Resume");
+            await(()->PlaybackPrefetch.prepared(entry.video),"Resume focus prepares that episode before selection");
             key(KeyEvent.KEYCODE_DPAD_DOWN);await(()->(Integer)value(view,"zone")==HomeView.Z_ROW,"Down selects the Continue Watching row");
             await(()->((String)value(((List<?>)value(view,"row")).get(0),"title")).equals(entry.title),"the latest show is the first card");
             await(()->((Float)value(((List<?>)value(view,"row")).get(0),"progress"))>0,"the card has saved progress");

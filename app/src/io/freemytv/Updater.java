@@ -176,6 +176,7 @@ final class Updater {
         boolean ours = s.optLong("installing") == installedCode(c);
         try (Adb adb = Adb.connectQuiet(c)) {
             adb.shell("cmd package compile -m speed -f " + c.getPackageName());
+            if (!TestState.active) HomeMode.rebindRemoteKeys(c, adb);
             if (Build.BRAND.toLowerCase(Locale.ROOT).contains("tcl") || Build.MANUFACTURER.toLowerCase(Locale.ROOT).contains("tcl")) {
                 adb.shell("appops set " + c.getPackageName() + " AUTO_START allow");
             }

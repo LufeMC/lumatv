@@ -105,7 +105,12 @@ final class SubtitleCues {
         if (head.trim().startsWith("WEBVTT")) cues = vtt(text);
         else if (head.contains("[Script Info]") || head.contains("[Events]") || text.contains("\nDialogue:")) cues = ass(text);
         else cues = srt(text);
-        return cues == null || cues.size() == 0 ? null : cues;
+        if (cues == null || cues.size() == 0) return null;
+        if (cues.size() <= 3) {
+            String content = String.join(" ", cues.text).toLowerCase(Locale.ROOT);
+            if (content.contains("support@subtito.com") && content.contains("something went wrong")) return null;
+        }
+        return cues;
     }
 
     private static long ms(String h, String m, String s, String f) {

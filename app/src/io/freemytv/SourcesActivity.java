@@ -38,16 +38,20 @@ public class SourcesActivity extends TvActivity {
     private boolean focusEpisodes, offersLoading = true, autoResume;
     private String resumeVideo = "", backdrop = "";
     private long resumePosition = -1, resumeDuration;
-    private int runtimeMinutes, probing, probeAttempts;
-    private boolean discoveryClosed;
-    private final ExecutorService probes = Executors.newFixedThreadPool(2);
+    private int runtimeMinutes;
     private SourceGate sourceGate;
     private PlaybackSession liveSession;
+    private String focusedWarmVideo = "";
     private final android.os.Handler playback = new android.os.Handler(android.os.Looper.getMainLooper());
     private final List<java.util.concurrent.Future<?>> sourceRequests = new ArrayList<>();
+    private final Runnable warmFocused = () -> warmVideo(focusedWarmVideo);
+    private void warmVideo(String video) {
+        if (!AddonStore.connected(this) || !video.matches("tt[0-9]+(?::[0-9]+:[0-9]+)?")) return;
+        ContinueWatching.Entry entry = new ContinueWatching.Entry(); entry.video = video; entry.kind = kind;
+        PlaybackPrefetch.warm(this, entry);
+    }
     private final Runnable sourceDeadline = () -> {
-        generation++; remaining = 0; probing = 0; discoveryClosed = true;
-        for (AddonStreams.Source source : sources) if (source.probeState == SourceProbe.CHECKING) source.probeState = SourceProbe.UNCERTAIN;
+        generation++; remaining = 0;
         for (java.util.concurrent.Future<?> request : sourceRequests) request.cancel(true);
         sourceRequests.clear();
         if (liveSession != null && PlaybackSession.current == liveSession) liveSession.updateSources(sources, false);
@@ -70,6 +74,7 @@ public class SourcesActivity extends TvActivity {
             String[] parts = resumeVideo.split(":");
             try { season = Integer.parseInt(parts[1]); focusedEpisode = Integer.parseInt(parts[2]); } catch (Exception ignored) { autoResume = false; }
         }
+        if (autoResume && imdb != null && (resumeVideo.equals(imdb) || resumeVideo.startsWith(imdb + ":"))) warmVideo(resumeVideo);
         page = new TitlePage(this, title, v -> onBackPressed());
         content = page.content; controls = page.actions; heading = page.heading; status = page.status;
         servicePlay = page.action("", v -> openService(), 210); servicePlay.setVisibility(View.GONE);
@@ -211,7 +216,13 @@ public class SourcesActivity extends TvActivity {
                         if (next != season) { season = next; focusedEpisode = 1; focusEpisodes = true; saveSelection(); loadEpisodes(); }
                     }, new TitlePage.Episodes() {
                         public void select(SeriesEpisodes.Episode episode) { selectEpisode(episode); }
-                        public void focus(SeriesEpisodes.Episode episode) { focusedEpisode = episode.number; saveSelection(); updatePlayLabel(); }
+                        public void focus(SeriesEpisodes.Episode episode) {
+                            focusedEpisode = episode.number; saveSelection(); updatePlayLabel();
+                            playback.removeCallbacks(warmFocused);
+                            if (!episode.future && imdb != null) {
+                                focusedWarmVideo = episode.id(imdb); playback.postDelayed(warmFocused, 750);
+                            }
+                        }
                     });
                     play.setEnabled(imdb != null && !parsed.isEmpty()); updatePlayLabel();
                     if (!focusEpisodes && active) { if (servicePlay.getVisibility() == View.VISIBLE) servicePlay.requestFocus(); else play.requestFocus(); } focusEpisodes = false;
@@ -288,6 +299,7 @@ public class SourcesActivity extends TvActivity {
                 }).show();
     }
     private void loadSources(String id, String label) {
+        playback.removeCallbacks(warmFocused);
         cancelService();
         page.deadEnd(null, null, null, null);
         PlaybackMemory.init(this);
@@ -297,7 +309,7 @@ public class SourcesActivity extends TvActivity {
         for (java.util.concurrent.Future<?> pending : sourceRequests) pending.cancel(true); sourceRequests.clear();
         sourceGate = new SourceGate(); liveSession = null;
         playback.postDelayed(sourceDeadline, 15000);
-        int request = ++generation; remaining = 0; probing = 0; probeAttempts = 0; discoveryClosed = false; failed = 0; unsupported = 0; sources.clear();
+        int request = ++generation; remaining = 0; failed = 0; unsupported = 0; sources.clear();
         content.removeAllViews();
         content.addView(text(label, 18));
         status.setText(Ui.tr("Verificando complementos…", "Checking add-ons…"));
@@ -320,10 +332,9 @@ public class SourcesActivity extends TvActivity {
                                 unsupported += loaded.unsupported;
                             }
                             remaining--;
-                            probeNext(request);
-                            if (remaining == 0 && probing == 0) { playback.removeCallbacks(sourceDeadline); sourceRequests.clear(); }
+                            if (remaining == 0) { playback.removeCallbacks(sourceDeadline); sourceRequests.clear(); }
                             if (liveSession != null && PlaybackSession.current == liveSession) {
-                                liveSession.updateSources(sources, remaining > 0 || probing > 0);
+                                liveSession.updateSources(sources, remaining > 0);
                             } else renderSources();
                         });
                     }));
@@ -335,49 +346,23 @@ public class SourcesActivity extends TvActivity {
         });
     }
     private List<AddonStreams.Source> checkedSources() {
-        List<AddonStreams.Source> ready = new ArrayList<>(), uncertain = new ArrayList<>();
-        for (AddonStreams.Source source : PlaybackPlan.automatic(sources)) {
-            if (source.probeState == SourceProbe.AVAILABLE) ready.add(source);
-            else if (source.probeState == SourceProbe.UNCERTAIN) uncertain.add(source);
-        }
-        if (ready.isEmpty() && probing == 0) ready.addAll(uncertain);
-        if (ready.isEmpty() && probing == 0 && remaining == 0 && (discoveryClosed || probeAttempts >= 12)) ready.addAll(PlaybackPlan.automatic(sources));
-        return ready;
-    }
-    private void probeNext(int request) {
-        if (liveSession != null && PlaybackSession.current == liveSession || discoveryClosed) return;
-        for (AddonStreams.Source source : PlaybackPlan.automatic(sources)) {
-            if (probing >= 2 || probeAttempts >= 12) break;
-            if (source.probeState != SourceProbe.UNKNOWN) continue;
-            source.probeState = SourceProbe.CHECKING; probing++; probeAttempts++;
-            sourceRequests.add(probes.submit(() -> {
-                int result = SourceProbe.check(source);
-                runOnUiThread(() -> {
-                    if (!current(request)) return;
-                    source.probeState = result; probing--;
-                    if (checkedSources().isEmpty()) probeNext(request);
-                    if (remaining == 0 && probing == 0) playback.removeCallbacks(sourceDeadline);
-                    if (liveSession != null && PlaybackSession.current == liveSession) liveSession.updateSources(sources, remaining > 0 || probing > 0);
-                    else renderSources();
-                });
-            }));
-        }
+        return PlaybackPlan.automatic(sources);
     }
     private void renderSources() {
         View focus = getCurrentFocus(); Object tag = focus == null ? null : focus.getTag();
         List<AddonStreams.Source> selected = checkedSources();
         playback.removeCallbacks(beginPlayback);
         if (pendingPlay && !selected.isEmpty() && active) {
-            long delay = sourceGate.delay(android.os.SystemClock.elapsedRealtime(), remaining + probing, selected);
+            long delay = sourceGate.delay(android.os.SystemClock.elapsedRealtime(), remaining, selected);
             if (delay == 0) { startPlayback(selected.get(0)); return; }
             if (delay > 0) playback.postDelayed(beginPlayback, delay);
         }
         content.removeAllViews();
-        String message = remaining + probing > 0 ? Ui.tr("Encontrando uma fonte…", "Finding a source…")
+        String message = remaining > 0 ? Ui.tr("Encontrando uma fonte…", "Finding a source…")
                 : selected.isEmpty() ? Ui.tr("Nenhuma fonte disponível. Tente novamente mais tarde.", "No sources are available. Try again later.")
                 : Ui.tr("Pronto para reproduzir.", "Ready to play.");
         status.setText(message);
-        if (remaining + probing == 0) {
+        if (remaining == 0) {
             if (selected.isEmpty()) {
                 pendingPlay = false;
                 List<String> reasons = new ArrayList<>();
@@ -405,7 +390,7 @@ public class SourcesActivity extends TvActivity {
         if (queue.isEmpty()) return;
         pendingPlay = false; playback.removeCallbacks(beginPlayback);
         PlaybackSession.current = new PlaybackSession(videoId, videoTitle, queue, -1);
-        liveSession = PlaybackSession.current; liveSession.updateSources(sources, remaining > 0 || probing > 0); liveSession.discovering = remaining > 0 || probing > 0;
+        liveSession = PlaybackSession.current; liveSession.updateSources(sources, remaining > 0); liveSession.discovering = remaining > 0;
         ContinueWatching.Entry entry = new ContinueWatching.Entry();
         entry.id = "local:" + videoId; entry.video = videoId; entry.imdb = imdb; entry.tmdb = titleId;
         entry.title = title; entry.kind = kind; entry.provider = "Stremio"; entry.art = backdrop.isEmpty() ? "" : "https://image.tmdb.org/t/p/w780" + backdrop;
@@ -443,9 +428,9 @@ public class SourcesActivity extends TvActivity {
         }
     }
     @Override protected void onStop() { page.pauseArtwork(); super.onStop(); }
-    @Override protected void onPause() { active = false; cancelService(); playback.removeCallbacks(beginPlayback); super.onPause(); }
+    @Override protected void onPause() { active = false; cancelService(); playback.removeCallbacks(beginPlayback); playback.removeCallbacks(warmFocused); super.onPause(); }
     @Override protected void onDestroy() {
-        generation++; playback.removeCallbacksAndMessages(null); network.shutdownNow(); probes.shutdownNow(); page.release();
+        generation++; playback.removeCallbacksAndMessages(null); network.shutdownNow(); page.release();
         if (liveSession != null && liveSession.discovering) { liveSession.discovering = false; if (liveSession.sourcesChanged != null) liveSession.sourcesChanged.run(); }
         super.onDestroy();
     }

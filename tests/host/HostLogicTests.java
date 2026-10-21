@@ -18,6 +18,7 @@ public class HostLogicTests {
         seek.begin(115000,120000,false); seek.move(1,0); check(seek.target == 119000 && !seek.playing, "seek clamps and retains pause");
         check(seek.finish(true) == 119000, "confirmed position is retained");
         check(PlaybackValidation.shortPlaceholder(1200000,30000), "error clip cannot replace an episode");
+        check(PlaybackValidation.shortPlaceholder(1140000,120000), "the reported two-minute error clip cannot replace an episode");
         check(!PlaybackValidation.shortPlaceholder(1200000,1200000), "full runtime remains valid");
         check(!PlaybackValidation.shortPlaceholder(30000,30000), "short content remains valid");
         check(AddonStreams.otherEpisode("show.S02E03.mkv", "tt1:2:2"), "wrong episode is detected");

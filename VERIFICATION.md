@@ -8,10 +8,17 @@ Dark appearance is the default at all times, following the latest user instructi
 ## Test conditions
 
 Device tests used one Android 11 G3 TV.
-The Hisense TV was excluded from all installation and control commands.
+Playback tests use the second TV.
+The user authorized a Hisense update after these tests pass and their errors are corrected.
 The application kept its original package and signing certificate.
 Tests used isolated preferences and selected state files.
-They did not upload test progress to Stremio.
+Most tests suppress Stremio progress uploads.
+One explicit server test changed the saved offset by one millisecond and then restored the complete original watch state.
+The remote-service test restarts only the already-enabled LumaTV service.
+It uses an isolated button mapping and the existing approved debugging key.
+It preserves the list of enabled accessibility services.
+Kernel input events exercise the accessibility filter because Android excludes instrumentation-injected events from that filter.
+See the [AOSP input-filter contract](https://android.googlesource.com/platform/frameworks/base/%2B/main/core/java/android/view/InputFilter.java).
 
 The private result directory contains JSONL records with each suite's APK SHA-256.
 It also contains native screenshots and performance samples.
@@ -30,10 +37,10 @@ The identifiers below group the 55 approved improvements without changing their 
 | U1 | LumaTV name and original package | Device: installed name, Home, settings, and update package. |
 | U2 | Flora icon and banner | Generated resources included in the APK. |
 | U3 | Phone search through QR | Device: `PhoneLinkTests`; authenticated text delivery. |
-| U4 | Remote application button mapping | Logic: protected keys and mapping. Device: Inputs target. Physical branded buttons remain model-dependent. |
+| U4 | Remote application button mapping | Device: six checks through the Android accessibility service. A mapped key opened Search. Idle media keys left Home visible. Physical branded buttons remain model-dependent. |
 | U5 | Prepare the next episode | Logic: source preparation and bounded media prefetch. Device: the player cached one MiB for the next episode. It then started that episode automatically. Video and audio continued for twenty seconds. |
 | U6 | Late-night Still watching prompt | Device: clock overrides tested both sides of midnight, prompt focus, timeout pause, wake release, and continued viewing. |
-| U7 | Stremio library and progress | Device: connected account, imported library, and local merge. Tests suppress remote progress writes. |
+| U7 | Stremio library and progress | Device: connected account, imported library, and local merge. A real server round trip passed seven checks. The original server watch state was restored. Other tests suppress progress uploads. |
 | U8 | People and related titles | Device: search, person page, credits, and related-title layouts. |
 | U9 | Flora opening | Implemented skippable opening with cached paths. Home tests wait for it to finish. |
 | U10 | Match video refresh rate | Implemented supported display-mode selection. Device: the G3 offers no matching 24-fps display mode. The player preserves its 60-Hz mode. Compatible-mode selection passed logic checks. |
@@ -57,7 +64,7 @@ The identifiers below group the 55 approved improvements without changing their 
 | T7 | Up next progress cards | Logic and device: completion thresholds, watched history, and next-episode card. |
 | T8 | Release wake state when paused | Device player checks; wake flag follows playback and countdown state. |
 | T9 | Restrict launcher crash fallback | Logic: foreground Home/screensaver classification and fallback controls. No deliberate device crash was required. |
-| T10 | Explain source failures | Device: controlled failures and recovery. Retry, more sources, and Stremio fallback implemented. |
+| T10 | Recover from source failures | Device: controlled failures and automatic batch continuation. The latest user instruction removes source counts and choices during automatic recovery. Technical reasons remain in the playback log. |
 | T11 | Recover on the same source after network loss | Device: controlled network-state failure and recovery. TV Wi-Fi settings were not changed. |
 | T12 | Recap and credits markers | Device: Skip recap, credits countdown, cancellation, and watched progress. |
 | T13 | Select and replace add-on subtitles | Device: external subtitle selection without player replacement; parsing and failure handling. |
@@ -66,11 +73,11 @@ The identifiers below group the 55 approved improvements without changing their 
 | S2 | Remember manual subtitle timing | Device: timing adjustment saved per release. |
 | S3 | Correct subtitle speed drift | Logic and device: correction, setting control, manual precedence, and Undo. |
 | S4 | Align subtitles with dialogue | Logic: decoded-PCM speech matching and confidence rejection. Device: scheduler and Undo. Device: decoded audio corrected a known 2.3-second caption error to within 0.1 second. Uncertain results remain unchanged. This controlled test does not guarantee accuracy for every release. |
-| Q1 | Forced subtitles when full subtitles are off | Implemented track-selection rules; controlled subtitle checks. |
+| Q1 | Forced subtitles when full subtitles are off | Device: a generated media file displayed its forced captions while full captions remained off. |
 | Q2 | Open title pages from Home picks | Implemented direct title intent; redesign navigation uses the title page. |
 | Q3 | Include released Stremio titles in Home picks | Logic: service filtering and release eligibility. |
 | Q4 | Rank episode filenames correctly | Logic: episode mismatch, combined files, and resolution-number cases. |
-| Q5 | Temporary subtitles after a short rewind | Implemented built-in subtitle replay until the previous position. |
+| Q5 | Temporary subtitles after a short rewind | Device: built-in English captions appeared temporarily and returned to Off at the previous position. |
 | Q6 | Correct interface text | Search counts, search instructions, and Live TV visibility updated. |
 | Q7 | Portuguese text and system clock format | Shared controls use scalable layouts. Clock follows the Android setting. Device: Portuguese series, playback, tracks, and Up next layouts passed. Phone layouts were reviewed in English and Portuguese. |
 | Q8 | Settings contrast in day mode | Shared theme and scene dimming implemented. Native dark settings screenshots reviewed. |
@@ -81,7 +88,7 @@ The identifiers below group the 55 approved improvements without changing their 
 | A4 | On-TV playback and crash log | Logic: bounded log; settings Notices integration. |
 | A5 | Maintain debugging approval quietly | Implemented quiet daily ADB job. Seven-day approval retention requires a longer observation period. |
 | A6 | Open the actual Netflix title | Device: installed app accepts a direct title intent. Delayed opening is canceled when the viewer leaves. |
-| A7 | Run logic checks on the computer | Host: 57 checks against production classes. |
+| A7 | Run logic checks on the computer | Host: 58 checks against production classes. |
 
 ## Current device checks
 
@@ -180,7 +187,7 @@ Unknown source bitrates still require an estimate.
 See [DESIGN-ACCEPTANCE.md](DESIGN-ACCEPTANCE.md) for the selected design states and their references.
 The source includes the approved feature groups.
 The remaining external actions are separate recovery-password storage and activation between two physical TVs.
-The Hisense remains excluded under the current device instruction.
+The Hisense update must wait until the current second-TV tests pass.
 
 ## Installed completion build
 
@@ -220,3 +227,38 @@ A complete download matched the local SHA-256 checksum.
 The Drive permission readback showed only the owner.
 The recovery password was not uploaded.
 It remains in Mac Keychain until the user saves it separately in a password manager.
+
+## Reported playback failures
+
+The reported Big Bang Theory episode was season 10, episode 2.
+The old player accepted a provider error video with a duration of exactly two minutes.
+The corrected duration check rejects that boundary before recording progress.
+The player also stopped after twelve candidates while more candidates remained.
+Automatic recovery now adds another batch without a source-selection action.
+
+Four workers inspect bounded media headers.
+The player uses one playback decoder.
+Within a resolution, a completed valid candidate can start before a slower candidate finishes.
+The checks reject missing tracks, unsupported codecs, and short error videos.
+They stop before large Matroska attachments when the headers provide the runtime.
+A generated padded file verified that the header read used only the first 64 KiB page.
+The complete metadata check has a 2 MiB network limit per candidate.
+Successful playback cancels unfinished checks.
+
+A two-worker checkpoint took 39.6 seconds from title launch to the recorded startup sample.
+Four-worker checkpoints took 13.4 and 14.1 seconds.
+These samples include provider response time and title loading.
+The earlier 13.4-second sample also included a screenshot delay of approximately one second.
+These measurements do not guarantee the same time for every provider or title.
+Both four-worker samples sustained verified 1080p video and advancing audio for sixty seconds.
+The English-caption sample showed dialogue captions on the actual episode.
+
+The subtitle parser now rejects the observed service-error message.
+Automatic selection tries another matching subtitle when a file fails.
+Release changes clear old captions and reject late responses for an earlier release.
+The subtitle cache identifies the selected release.
+Automatic selection excludes subtitle labels that identify another episode.
+Controlled player tests verified error fallback and release replacement.
+
+Focused checks also passed for forced captions, temporary rewind captions, shared add-on requests, and real server progress restoration.
+The full regression pass and installed-build identity remain separate acceptance steps.
