@@ -149,7 +149,7 @@ final class ContinueWatching {
             long now = System.currentTimeMillis();
             stones.put("id:" + entry.identity(), now);
             if (!entry.imdb.isEmpty()) stones.put("show:" + entry.imdb, now);
-            stones.put("title:" + showKey(entry), now);
+            stones.put("title:" + entry.kind + ":" + showKey(entry), now);
             // Keep the newest 200.
             if (stones.length() > 200) {
                 List<String> keys = new ArrayList<>(); java.util.Iterator<String> it = stones.keys(); while (it.hasNext()) keys.add(it.next());
@@ -163,12 +163,13 @@ final class ContinueWatching {
         } catch (Exception ignored) {}
     }
 
-    private static List<Entry> visible(Context context, List<Entry> entries) {
+    static List<Entry> visible(Context context, List<Entry> entries) {
         JSONObject stones;
         try { stones = new JSONObject(context.getSharedPreferences(PREFS, 0).getString("removed", "{}")); } catch (Exception e) { stones = new JSONObject(); }
         List<Entry> out = new ArrayList<>();
         for (Entry e : entries) {
             long removed = Math.max(stones.optLong("id:" + e.identity()), e.imdb.isEmpty() ? stones.optLong("title:" + showKey(e)) : stones.optLong("show:" + e.imdb));
+            removed = Math.max(removed, stones.optLong("title:" + e.kind + ":" + showKey(e)));
             if (removed == 0 || e.updated > removed) out.add(e);
         }
         return out;

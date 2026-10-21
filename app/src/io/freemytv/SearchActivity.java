@@ -59,11 +59,17 @@ public class SearchActivity extends TvActivity {
                 if(a<0||b<0){query.append(text);return;}
                 int start=Math.min(a,b); query.getText().replace(start,Math.max(a,b),text);query.setSelection(start+text.length());
             }
-            public void delete() { if (query.length() > 0) query.getText().delete(query.length() - 1, query.length()); }
+            public void delete() {
+                int a = Math.max(0, query.getSelectionStart()), b = Math.max(0, query.getSelectionEnd());
+                int end = Math.max(a, b), start = Math.min(a, b);
+                if (start == end && start > 0) start = Character.offsetByCodePoints(query.getText(), start, -1);
+                if (start < end) { query.getText().delete(start, end); query.setSelection(start); }
+            }
+            public void clear() { query.setText(""); }
             public void voice() { try { startActivityForResult(voiceIntent(), 20); } catch (RuntimeException e) { status.setText(Ui.tr("A voz não está disponível.", "Voice input is unavailable.")); } }
         });
         keys.setId(View.generateViewId()); query.setNextFocusDownId(keys.getId()); keys.setNextFocusUpId(query.getId());
-        root.addView(keys, at(-1, 56, 96, 178, 96));
+        root.addView(keys, at(480, 472, 96, 224, 0));
         FrameLayout results = new FrameLayout(this); results.setClipChildren(false);
         ScrollView scroll = new ScrollView(this); scroll.setClipChildren(false); scroll.setClipToPadding(false); scroll.setVerticalScrollBarEnabled(false);
         content = column(); content.setClipChildren(false); content.setPadding(0, px(20), 0, px(64)); scroll.addView(content);
@@ -76,7 +82,7 @@ public class SearchActivity extends TvActivity {
         phone = new ImageView(this); phone.setBackground(Look.round(this, 0xFFE9E6DF, 20)); phone.setPadding(px(26), px(26), px(26), px(26));
         phone.setContentDescription(Ui.tr("Código para buscar pelo telefone", "Code for phone search")); phonePanel.addView(phone, gap(px(328), px(328), 25));
         FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(px(400), -2, Gravity.TOP | Gravity.END); pp.topMargin = px(20); results.addView(phonePanel, pp); phoneCard = phonePanel;
-        FrameLayout.LayoutParams rp = at(-1, -1, 96, 300, 96); root.addView(results, rp);
+        FrameLayout.LayoutParams rp = at(-1, -1, 672, 208, 96); root.addView(results, rp);
         setContentView(root);
         query.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -103,7 +109,7 @@ public class SearchActivity extends TvActivity {
         super.onActivityResult(request, result, data);
         if (request == 20 && result == RESULT_OK && data != null) { ArrayList<String> values = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS); if (values != null && !values.isEmpty()) query.setText(values.get(0)); }
     }
-    void focusSearch() { query.selectAll(); keys.requestFocus(); }
+    void focusSearch() { query.selectAll(); keys.reset(); keys.requestFocus(); }
     private void empty() {
         int generation = requestId; status.setText(""); phoneCard.setVisibility(View.VISIBLE); content.setPadding(0, px(20), 0, px(64));
         content.removeAllViews(); LinearLayout recentBlock = column(); recentBlock.setMinimumHeight(px(160));
@@ -218,6 +224,7 @@ public class SearchActivity extends TvActivity {
     }
     private LinearLayout card(ArtTile tile, String name, String line, int width, int height) {
         LinearLayout card = column(); card.setFocusable(true); card.setClickable(true); card.setClipChildren(false); card.setContentDescription(name + ". " + line);
+        card.setId(View.generateViewId());
         tile.setDuplicateParentStateEnabled(true); tile.setForeground(Look.ring(this, 16)); card.addView(tile, gap(px(width), px(height), 0));
         card.setOnFocusChangeListener((v, focused) -> tile.animate().scaleX(focused ? 1.04f : 1).scaleY(focused ? 1.04f : 1).setDuration(140).start());
         TextView title = text(name, 24); title.setSingleLine(true); title.setEllipsize(TextUtils.TruncateAt.END); card.addView(title, gap(px(width), -2, 14));

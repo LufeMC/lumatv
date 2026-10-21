@@ -56,7 +56,7 @@ final class NewEpisodes {
                 shows.put(id, e);
             }
         }
-        List<ContinueWatching.Entry> ordered = new ArrayList<>(shows.values());
+        List<ContinueWatching.Entry> ordered = ContinueWatching.visible(context, new ArrayList<>(shows.values()));
         ordered.sort((a, b) -> Long.compare(b.updated, a.updated));
         return ordered.subList(0, Math.min(40, ordered.size()));
     }

@@ -3,6 +3,8 @@
     <application android:label="Free My TV tests">
       <provider android:name="io.freemytv.TestMediaProvider" android:authorities="io.freemytv.tests.media" android:exported="true" />
     </application>
+    <instrumentation android:name="io.freemytv.KeyboardGridTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
+    <instrumentation android:name="io.freemytv.WatchingRemovalTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.UpdateIntegrationTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv" />
     <instrumentation android:name="io.freemytv.SubtitlePipelineTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />
     <instrumentation android:name="io.freemytv.DesignStatesTests" android:targetPackage="io.freemytv" android:targetProcesses="io.freemytv:home" />

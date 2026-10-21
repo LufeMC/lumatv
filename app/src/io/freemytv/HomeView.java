@@ -47,7 +47,7 @@ import java.util.concurrent.Executors;
  *    Resume chip and a quiet row of white app logos;
  *  - Down: content takes over. A cinema hero for the focused card (its backdrop follows focus) and one row: Continue
  *    Watching (with Up next cards), Watchlist and what's trending on your apps;
- *  - OK on the search bar (or just typing): a one-line keyboard and results that say where each title plays;
+ *  - OK on Search opens a letter grid beside results that identify each title's service;
  *  - long-press OK: a card's actions, or editing the app row in place; All apps is a plain text grid.
  * Measurements are in a 1920 × 1080 space (k = width / 1920). Nothing here uses live blur: the frosted bar reads a
  * pre-blurred copy of the landscape, so the TV's GPU only draws pictures and text.
@@ -60,8 +60,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float HERO_TOP = 222;
     private static final float ROW_TOP = 618, CARDS_TOP = 665, CARD_W = 320, CARD_H = 180, CARD_GAP = 28, SECTION_GAP = 44;
     private static final float ICON = 56, ICON_GAP = 8, ICONS_TOP = 58;
-    private static final float KEYS_TOP = 168, KEYS_H = 56;
-    private static final float RESULTS_TOP = 290, RESULT_W = 400, RESULT_H = 225, RESULT_GAP = 28;
+    private static final float KEYS_TOP = 224, KEYS_H = 472, KEYS_W = 480, RESULTS_LEFT = 672;
+    private static final float RESULTS_TOP = 208, RESULT_W = 352, RESULT_H = 198, RESULT_GAP = 28;
     private static final RectF PILL_REST = new RectF(480, 404, 1440, 500), PILL_CONTENT = new RectF(760, 56, 1160, 116),
             PILL_SEARCH = new RectF(480, 52, 1440, 140);
     // States and focus
@@ -206,6 +206,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     int zone = Z_PILL;
     private int iconIndex, heroIndex, rowIndex, logoIndex, resultIndex, recentIndex;
     private int overlayKind = OV_NONE;
+    private int watchGeneration;
     private final Spring contentT = new Spring(0.5f, 1f, 0), searchT = new Spring(0.45f, 1f, 0), overlayT = new Spring(0.36f, 1f, 0);
     private final Spring rowScroll = new Spring(0.42f, 1f, 0), allScroll = new Spring(0.4f, 1f, 0);
     private Spring[] rowFocus = new Spring[0];
@@ -329,7 +330,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         overlay = new Layer(a, 2);
         keys = new KeyRow(a, voice, new KeyRow.Listener() {
             @Override public void type(String text) { setQuery(query + text); }
-            @Override public void delete() { if (!query.isEmpty()) setQuery(query.substring(0, query.length() - 1)); }
+            @Override public void delete() { if (!query.isEmpty()) setQuery(query.substring(0, query.offsetByCodePoints(query.length(), -1))); }
+            @Override public void clear() { setQuery(""); }
             @Override public void voice() { startVoice(); }
         });
         keys.setFocusable(false);
@@ -518,6 +520,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void refreshRow() {
+        final int generation = ++watchGeneration;
         final Context c = getContext().getApplicationContext();
         WORK.execute(() -> {
             final List<ContinueWatching.Entry> loaded = ContinueWatching.refresh(c);
@@ -525,7 +528,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             final List<NewEpisodes.Notice> notices = NewEpisodes.cached(c, followed, System.currentTimeMillis());
             final List<NewEpisodes.Notice> waiting = NewEpisodes.retained(c, followed, System.currentTimeMillis());
             handler.post(() -> {
-                if (!running) return;
+                if (!running || generation != watchGeneration) return;
                 entries = loaded;
                 episodeNotices = notices;
                 waitingSeries = waiting;
@@ -533,7 +536,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 changed();
                 noticeVisible = online;
                 if (online) NewEpisodes.refresh(c, followed, () -> noticeVisible, () -> handler.post(() -> {
-                    if (!running) return;
+                    if (!running || generation != watchGeneration) return;
                     episodeNotices = NewEpisodes.cached(c, followed, System.currentTimeMillis());
                     waitingSeries = NewEpisodes.retained(c, followed, System.currentTimeMillis());
                     buildRow(); changed();
@@ -735,7 +738,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < getChildCount(); i++) {
             View v = getChildAt(i);
             if (v == keys) {
-                v.measure(MeasureSpec.makeMeasureSpec(Math.round((RIGHT - SAFE) * width / 1920f), MeasureSpec.EXACTLY),
+                v.measure(MeasureSpec.makeMeasureSpec(Math.round(KEYS_W * width / 1920f), MeasureSpec.EXACTLY),
                         MeasureSpec.makeMeasureSpec(Math.round(KEYS_H * width / 1920f), MeasureSpec.EXACTLY));
             } else {
                 v.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
@@ -1290,6 +1293,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.drawText(e.title, x, base, chipStrongP);
         x += chipStrongP.measureText(e.title) + 10 * k;
         c.drawText(rest, x, base, chipP);
+        if (focused) drawOptionsHint(c, (w - hintP.measureText(optionsHint())) / 2,
+                (CHIP_TOP + CHIP_H + (episodeNotices.isEmpty() ? 38 : 124)) * k, alpha, ink);
     }
 
     private static String chipRest(ContinueWatching.Entry e) {
@@ -1478,6 +1483,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         for (int i = 0; i < row.size(); i++) if (i != top1) drawCard(c, i, top, scroll, alpha);
         if (top1 >= 0) drawCard(c, top1, top, scroll, alpha);
+        Card focused = focusedCard();
+        if (overlayKind == OV_NONE && zone == Z_ROW && focused != null && removable(focused))
+            drawOptionsHint(c, SAFE * k, 936 * k, alpha, Look.INK);
+    }
+
+    private String optionsHint() { return Ui.tr("Segure OK para ver opções", "Hold OK for options"); }
+    private void drawOptionsHint(Canvas c, float x, float y, float alpha, int ink) {
+        hintP.setColor(Ui.alpha(ink, 0.72f * alpha));
+        c.drawText(optionsHint(), x, y, hintP);
     }
 
     private void drawCard(Canvas c, int i, float top, float scroll, float alpha) {
@@ -1616,18 +1630,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (query.trim().isEmpty()) {
             if (recent.isEmpty()) return;
             labelP.setColor(Ui.alpha(Look.INK, 0.66f * alpha));
-            c.drawText(Ui.tr("Recentes", "Recent"), SAFE * k, (300 + 24 * 0.96f) * k, labelP);
-            float x = SAFE * k, y = (300 + 29 + 20) * k;
+            c.drawText(Ui.tr("Recentes", "Recent"), RESULTS_LEFT * k, top + 24 * 0.96f * k, labelP);
+            float x = RESULTS_LEFT * k, y = top + 64 * k;
             for (int i = 0; i < recent.size(); i++) {
                 String q = recent.get(i);
-                float bw = recentP.measureText(q) + 56 * k;
+                String label = TextUtils.ellipsize(q, new TextPaint(recentP), (RIGHT - RESULTS_LEFT - 56) * k, TextUtils.TruncateAt.END).toString();
+                float bw = recentP.measureText(label) + 56 * k;
                 r.set(x, y, x + bw, y + 60 * k);
                 boolean on = overlayKind == OV_NONE && zone == Z_RECENT && recentIndex == i;
                 fill.setColor(Ui.alpha(on ? Look.INK : 0x1AFFFFFF, alpha));
                 c.drawRoundRect(r, 30 * k, 30 * k, fill);
                 recentP.setColor(Ui.alpha(on ? Look.ON_INK : Look.INK, alpha));
-                c.drawText(q, x + 28 * k, r.centerY() + Ui.halfCap(recentP), recentP);
-                x += bw + 12 * k;
+                c.drawText(label, x + 28 * k, r.centerY() + Ui.halfCap(recentP), recentP);
+                y += 76 * k;
             }
             return;
         }
@@ -1637,12 +1652,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             else if (!searchError.isEmpty()) label = searchError;
             else label = Ui.tr("Nenhum título com “", "No titles match “") + query.trim() + "”";
             labelP.setColor(Ui.alpha(Look.INK, 0.66f * alpha));
-            c.drawText(label, SAFE * k, top + 24 * 0.96f * k, labelP);
+            label = TextUtils.ellipsize(label, new TextPaint(labelP), (RIGHT - RESULTS_LEFT) * k, TextUtils.TruncateAt.END).toString();
+            c.drawText(label, RESULTS_LEFT * k, top + 24 * 0.96f * k, labelP);
             return;
         }
-        // Rows scroll up under the keyboard; nothing draws above it.
+        // Results stay beside the keyboard while their rows scroll.
         c.save();
-        c.clipRect(0, (KEYS_TOP + KEYS_H + 20) * k, w, h);
+        c.clipRect((RESULTS_LEFT - 16) * k, (RESULTS_TOP - 12) * k, w, h);
         float scroll = searchScroll.value;
         for (int si = 0; si < sections.size(); si++) {
             Section sec = sections.get(si);
@@ -1651,7 +1667,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             labelP.setColor(Ui.alpha(Look.INK, 0.66f * alpha));
             String label = sec.label;
             if (si == 0 && searching && !sec.apps) label += "  ·  " + Ui.tr("buscando…", "searching…");
-            c.drawText(label, SAFE * k, y + 24 * 0.96f * k, labelP);
+            c.drawText(label, RESULTS_LEFT * k, y + 24 * 0.96f * k, labelP);
             float itemsTop = y + (29 + 20) * k;
             c.save();
             c.translate(-sec.scroll.value * k, 0);
@@ -1663,7 +1679,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawAppResults(Canvas c, Section sec, int si, float y, float alpha) {
-        float x = SAFE * k;
+        float x = RESULTS_LEFT * k;
         for (int i = 0; i < sec.items.size(); i++) {
             HomeApps.Item it = sec.items.get(i);
             boolean on = overlayKind == OV_NONE && zone == Z_RESULTS && sectionIndex == si && resultIndex == i;
@@ -1690,7 +1706,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawResult(Canvas c, Result res, int i, float top, float alpha) {
-        float left = (SAFE + i * (RESULT_W + RESULT_GAP)) * k;
+        float left = (RESULTS_LEFT + i * (RESULT_W + RESULT_GAP)) * k;
         float f = Ui.clamp(res.focus.value);
         float s = 1 + 0.04f * res.focus.value;
         float cw = RESULT_W * k, ch = RESULT_H * k, cx = left + cw / 2, cy = top + ch / 2;
@@ -2016,7 +2032,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             float step = sec.apps ? 260 : RESULT_W + RESULT_GAP, width = sec.apps ? 240 : RESULT_W;
             float x = resultIndex * step, sx = sec.scroll.target;
             if (x - sx < 0) sx = x;
-            if (x + width - sx > RIGHT - SAFE) sx = x + width - (RIGHT - SAFE);
+            if (x + width - sx > RIGHT - RESULTS_LEFT) sx = x + width - (RIGHT - RESULTS_LEFT);
             sec.scroll.target = Math.max(0, sx);
             if (snap) sec.scroll.snap(sec.scroll.target);
         } else if (zone != Z_RESULTS) {
@@ -2040,10 +2056,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         switch (zone) {
             case Z_ICONS: return new String[] {Ui.tr("Entradas", "Inputs"), Ui.tr("Todos os apps", "All apps"), Ui.tr("Configurações", "Settings")}[iconIndex];
             case Z_PILL: return Ui.tr("Buscar", "Search") + (query.isEmpty() ? "" : ": " + query);
-            case Z_CHIP: return chipEntry() == null ? "" : Ui.tr("Continuar ", "Resume ") + chipEntry().title;
+            case Z_CHIP: return chipEntry() == null ? "" : Ui.tr("Continuar ", "Resume ") + chipEntry().title + ". " + optionsHint();
+            case Z_KEYS: return keys.description();
             case Z_NEWS: return episodeNotices.isEmpty() ? "" : Ui.tr("Novo episódio de ", "New episode of ") + episodeNotices.get(0).entry.title + " " + episodeNotices.get(0).entry.code();
             case Z_LOGOS: return logoIndex < shelf.size() ? shelf.get(logoIndex).label : "";
-            case Z_ROW: return focusedCard() == null ? "" : focusedCard().title + ", " + focusedCard().sub;
+            case Z_ROW: return focusedCard() == null ? "" : focusedCard().title + ", " + focusedCard().sub
+                    + (removable(focusedCard()) ? ". " + optionsHint() : "");
             case Z_HERO: return focusedCard() == null ? "" : heroIndex == 0 ? focusedCard().primary : focusedCard().secondary;
             case Z_RESULTS: {
                 Result res = focusedResult();
@@ -2167,7 +2185,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_KEYS:
                 if (dy < 0) zone = Z_PILL;
-                else if (dy > 0) {
+                else if (dy > 0 || dx > 0) {
                     if (query.trim().isEmpty()) { if (recent.isEmpty()) return; zone = Z_RECENT; recentIndex = 0; }
                     else if (!sections.isEmpty()) { zone = Z_RESULTS; sectionIndex = 0; resultIndex = 0; }
                     else return;
@@ -2178,6 +2196,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             case Z_RESULTS: {
                 Section sec = sections.get(Math.min(sectionIndex, sections.size() - 1));
                 if (dx != 0) {
+                    if (dx < 0 && resultIndex == 0) { zone = Z_KEYS; break; }
                     int next = Math.max(0, Math.min(sec.size() - 1, resultIndex + dx));
                     if (next == resultIndex) return;
                     resultIndex = next;
@@ -2192,12 +2211,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             }
             case Z_RECENT:
-                if (dx != 0) {
-                    int next = Math.max(0, Math.min(recent.size() - 1, recentIndex + dx));
+                if (dx < 0) { zone = Z_KEYS; }
+                else if (dy != 0) {
+                    int next = Math.max(0, Math.min(recent.size() - 1, recentIndex + dy));
+                    if (dy < 0 && recentIndex == 0) { zone = Z_PILL; break; }
                     if (next == recentIndex) return;
                     recentIndex = next;
-                } else if (dy < 0) {
-                    zone = Z_KEYS;
                 } else {
                     return;
                 }
@@ -2220,10 +2239,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int code = e.getKeyCode();
         if (overlayKind != OV_NONE) return overlayKey(e);
         if (mode == SEARCH && zone == Z_KEYS && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
+                || code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN
                 || code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER)) {
-            if (down && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) click.move();
-            keys.handle(e);
-            return true;
+            if (keys.handle(e)) {
+                if (down) { click.move(); setContentDescription(describe()); }
+                return true;
+            }
         }
         switch (code) {
             case KeyEvent.KEYCODE_SEARCH:
@@ -2474,6 +2495,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         overlayKind = kind;
         overlayT.target = 1;
         overlay.setVisibility(VISIBLE);
+        if (kind == OV_MENU && !menu.isEmpty()) setContentDescription(menu.get(menuIndex).label);
         aimRow(false);
         changed();
     }
@@ -2484,6 +2506,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         menuCard = null;
         overlayT.target = 0;
         overlayT.snap(0);
+        setContentDescription(describe());
         aimRow(false);
         changed();
     }
@@ -2517,15 +2540,36 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             addEntryActions(card);
         } else {
             menu.add(new MenuItem(card.primary, PLAY_ICON, false, () -> primary(card)));
-            menu.add(new MenuItem(Ui.tr("Detalhes", "Details"), SHOW_ICON, false, () -> details(card)));
+            if (card.kind != RELEASE) menu.add(new MenuItem(Ui.tr("Detalhes", "Details"), SHOW_ICON, false, () -> details(card)));
+            addEntryActions(card);
         }
         menuIndex = 0;
         click.open();
         openOverlay(OV_MENU);
     }
 
-    /** Mark as watched and Remove, when the library supports them. */
+    private boolean removable(Card card) {
+        return card.entry != null && (card.kind == RELEASE || card.kind == CW
+                && card.section.equals(Ui.tr("Continuar assistindo", "Continue Watching")));
+    }
+
+    /** Hide the title locally without removing it from the account's library. */
     private void addEntryActions(Card card) {
+        if (!removable(card)) return;
+        String label = card.kind == CW ? Ui.tr("Remover de Continuar assistindo", "Remove from Continue Watching")
+                : Ui.tr("Remover das suas séries", "Remove from Your series");
+        menu.add(new MenuItem(label, CLOSE_ICON, false, () -> {
+            watchGeneration++;
+            ContinueWatching.remove(getContext(), card.entry);
+            entries = ContinueWatching.cached(getContext());
+            List<ContinueWatching.Entry> followed = NewEpisodes.followed(getContext(), entries);
+            episodeNotices = NewEpisodes.cached(getContext(), followed, System.currentTimeMillis());
+            waitingSeries = NewEpisodes.retained(getContext(), followed, System.currentTimeMillis());
+            buildRow();
+            if (zone == Z_CHIP && chipEntry() == null || zone == Z_ROW && row.isEmpty()) zone = Z_PILL;
+            showToast(Ui.tr("Título removido.", "Title removed."));
+            setContentDescription(describe()); changed();
+        }));
     }
 
     private void openAllApps() {
@@ -2581,6 +2625,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             int next = Math.max(0, Math.min(menu.size() - 1, menuIndex + dy));
             if (next != menuIndex) {
                 menuIndex = next;
+                setContentDescription(menu.get(menuIndex).label);
                 click.move();
                 overlay.invalidate();
             }

@@ -7,30 +7,26 @@ import android.graphics.Path;
 import android.graphics.RectF;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.accessibility.AccessibilityNodeInfo;
 
-/**
- * The one-line keyboard of the home screen and of Search: a to z, then numbers, space and delete (and the
- * microphone when the TV has voice input). Left and right move along it, OK types; up and down are left to the screen.
- * The home screen drives it directly (it draws focus with `active`); in Search it is an ordinary focusable view.
- */
+/** Shared six-column keyboard for Home and Search. Arrow keys move between adjacent keys. */
 final class KeyRow extends View {
     interface Listener {
         void type(String text);
         void delete();
+        void clear();
         void voice();
     }
-
-    private static final String LETTERS = "abcdefghijklmnopqrstuvwxyz", DIGITS = "1234567890-'&:";
-    private static final int NUMBERS = -1, SPACE = -2, DELETE = -3, VOICE = -4;
+    private static final String LETTERS = "abcdefghijklmnopqrstuvwxyz", DIGITS = "1234567890-'&:.,!?()/+@#%_";
+    private static final int SPACE = -1, DELETE = -2, NUMBERS = -3, CLEAR = -4, VOICE = -5;
     private final Listener listener;
     private final boolean hasVoice;
     private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG), fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint icon = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF cell = new RectF();
-    private final Path space = SvgPath.parse("M4 10v4h16v-4"), delete = SvgPath.parse("M9 5h11v14H9l-6-7z M12.5 9.5l5 5M17.5 9.5l-5 5");
-    private final Path mic = SvgPath.parse("M9 6a3 3 0 0 1 6 0v5a3 3 0 0 1 -6 0z M5 11a7 7 0 0 0 14 0M12 18v3");
+    private final Path delete = SvgPath.parse("M9 5h11v14H9l-6-7z M12.5 9.5l5 5M17.5 9.5l-5 5");
     private String chars = LETTERS;
-    private int index;
+    private int index, column;
     private boolean active, dark = true;
 
     KeyRow(Context c, boolean voice, Listener listener) {
@@ -38,154 +34,117 @@ final class KeyRow extends View {
         this.listener = listener;
         this.hasVoice = voice;
         setFocusable(true);
-        setContentDescription(Ui.tr("Teclado", "Keyboard"));
+        setClickable(true);
         text.setTypeface(Ui.regular);
         text.setTextAlign(Paint.Align.CENTER);
         icon.setStyle(Paint.Style.STROKE);
         icon.setStrokeCap(Paint.Cap.ROUND);
         icon.setStrokeJoin(Paint.Join.ROUND);
+        setOnClickListener(v -> press(false));
+        updateDescription();
     }
-
-    /** Home screen: whether the row has the (drawn) focus. */
-    void setActive(boolean value) {
-        if (active != value) {
-            active = value;
-            invalidate();
-        }
-    }
-
-    void setDark(boolean value) {
-        if (dark != value) {
-            dark = value;
-            invalidate();
-        }
-    }
-
+    void setActive(boolean value) { if (active != value) { active = value; invalidate(); } }
+    void setDark(boolean value) { if (dark != value) { dark = value; invalidate(); } }
     void reset() {
         chars = LETTERS;
-        index = 0;
-        invalidate();
+        index = column = 0;
+        updateDescription(); invalidate();
     }
-
-    private int count() {
-        return chars.length() + 3 + (hasVoice ? 1 : 0);
-    }
-
+    private int count() { return hasVoice ? 31 : 30; }
+    private int row(int i) { return i < 26 ? i / 6 : i < 28 ? 4 : 5; }
+    private int col(int i) { return i < 26 ? i % 6 : i == 26 ? 2 : i == 27 ? 4 : (i - 28) * 2; }
+    private int span(int i) { return i < 26 ? 1 : i == 29 && !hasVoice ? 4 : 2; }
     private int code(int i) {
-        if (i < chars.length()) return chars.charAt(i);
-        int extra = i - chars.length();
-        return extra == 0 ? NUMBERS : extra == 1 ? SPACE : extra == 2 ? DELETE : VOICE;
+        return i < 26 ? chars.charAt(i) : i == 26 ? SPACE : i == 27 ? DELETE : i == 28 ? NUMBERS : i == 29 ? CLEAR : VOICE;
     }
-
-    /** Fixed widths for the special keys (design px); letters share the rest. */
-    private float width(int code) {
+    private int at(int row, int column) {
+        for (int i = 0; i < count(); i++) if (row(i) == row && column >= col(i) && column < col(i) + span(i)) return i;
+        return index;
+    }
+    private String label(int code) {
+        if (code >= 0) return String.valueOf((char) code);
         switch (code) {
-            case NUMBERS: return 96;
-            case SPACE: return 96;
-            case DELETE: case VOICE: return 72;
-            default: return 0;
+            case SPACE: return Ui.tr("Espaço", "Space");
+            case DELETE: return Ui.tr("Apagar", "Delete");
+            case NUMBERS: return chars == LETTERS ? "123" : "ABC";
+            case CLEAR: return Ui.tr("Limpar", "Clear");
+            default: return Ui.tr("Voz", "Voice");
         }
     }
-
+    String description() { return Ui.tr("Teclado. ", "Keyboard. ") + label(code(index)); }
+    private void updateDescription() { setContentDescription(description()); }
     private void cell(int i) {
-        float k = Look.s(getContext(), 1), gap = 2 * k;
-        float fixed = 0;
-        for (int j = chars.length(); j < count(); j++) fixed += width(code(j)) * k;
-        float letter = (getWidth() - fixed - gap * (count() - 1)) / chars.length();
-        float x = 0;
-        for (int j = 0; j < i; j++) x += (j < chars.length() ? letter : width(code(j)) * k) + gap;
-        float w = i < chars.length() ? letter : width(code(i)) * k;
-        cell.set(x, 0, x + w, getHeight());
+        float gap = Look.s(getContext(), 8);
+        float width = (getWidth() - 5 * gap) / 6, height = (getHeight() - 5 * gap) / 6;
+        float x = col(i) * (width + gap), y = row(i) * (height + gap);
+        cell.set(x, y, x + width * span(i) + gap * (span(i) - 1), y + height);
     }
-
+    /** An outer Up, Down, or Right press returns to the screen's focus navigation. */
     boolean handle(KeyEvent e) {
-        if (e.getAction() != KeyEvent.ACTION_DOWN) {
-            return e.getKeyCode() == KeyEvent.KEYCODE_DPAD_LEFT || e.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT
-                    || e.getKeyCode() == KeyEvent.KEYCODE_DPAD_CENTER || e.getKeyCode() == KeyEvent.KEYCODE_ENTER;
+        int key = e.getKeyCode();
+        boolean arrow = key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT
+                || key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN;
+        boolean select = key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER || key == KeyEvent.KEYCODE_NUMPAD_ENTER;
+        if (!arrow && !select) return false;
+        if (e.getAction() != KeyEvent.ACTION_DOWN) return true;
+        if (select) { press(e.getRepeatCount() > 0); return true; }
+        int next;
+        if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+            if (col(index) == 0) return true;
+            column = col(index) - 1; next = at(row(index), column);
+        } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            if (col(index) + span(index) == 6) return false;
+            column = col(index) + span(index); next = at(row(index), column);
+        } else {
+            int nextRow = row(index) + (key == KeyEvent.KEYCODE_DPAD_UP ? -1 : 1);
+            if (nextRow < 0 || nextRow > 5) return false;
+            next = at(nextRow, column);
         }
-        switch (e.getKeyCode()) {
-            case KeyEvent.KEYCODE_DPAD_LEFT:
-                if (index == 0) return true;
-                index--;
-                invalidate();
-                return true;
-            case KeyEvent.KEYCODE_DPAD_RIGHT:
-                if (index >= count() - 1) return true;
-                index++;
-                invalidate();
-                return true;
-            case KeyEvent.KEYCODE_DPAD_CENTER:
-            case KeyEvent.KEYCODE_ENTER:
-            case KeyEvent.KEYCODE_NUMPAD_ENTER:
-                press(e.getRepeatCount() > 0);
-                return true;
-            default:
-                return false;
-        }
+        index = next;
+        updateDescription();
+        if (isFocused()) announceForAccessibility(getContentDescription());
+        invalidate(); return true;
     }
-
     private void press(boolean repeat) {
         int code = code(index);
         if (repeat && code != DELETE) return;
         if (code == NUMBERS) {
             chars = chars == LETTERS ? DIGITS : LETTERS;
-            index = chars.length();
-            invalidate();
-        } else if (code == SPACE) {
-            listener.type(" ");
-        } else if (code == DELETE) {
-            listener.delete();
-        } else if (code == VOICE) {
-            listener.voice();
-        } else {
-            listener.type(String.valueOf((char) code));
-        }
+            updateDescription(); invalidate();
+        } else if (code == SPACE) listener.type(" ");
+        else if (code == DELETE) listener.delete();
+        else if (code == CLEAR) listener.clear();
+        else if (code == VOICE) listener.voice();
+        else listener.type(String.valueOf((char) code));
     }
-
-    @Override public boolean onKeyDown(int keyCode, KeyEvent event) {
-        return handle(event) || super.onKeyDown(keyCode, event);
-    }
-
-    @Override public boolean onKeyUp(int keyCode, KeyEvent event) {
-        return handle(event) || super.onKeyUp(keyCode, event);
-    }
-
+    @Override public boolean onKeyDown(int keyCode, KeyEvent event) { return handle(event) || super.onKeyDown(keyCode, event); }
+    @Override public boolean onKeyUp(int keyCode, KeyEvent event) { return handle(event) || super.onKeyUp(keyCode, event); }
     @Override protected void onFocusChanged(boolean gainFocus, int direction, android.graphics.Rect previous) {
-        super.onFocusChanged(gainFocus, direction, previous);
-        invalidate();
+        super.onFocusChanged(gainFocus, direction, previous); invalidate();
     }
-
+    @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(android.widget.Button.class.getName());
+    }
     @Override protected void onDraw(Canvas c) {
         float k = Look.s(getContext(), 1);
         boolean focus = active || isFocused();
         int ink = dark ? Look.INK : Look.DAY_INK;
-        text.setTextSize(26 * k);
-        icon.setStrokeWidth(1.8f);
         for (int i = 0; i < count(); i++) {
             cell(i);
             boolean on = focus && i == index;
-            if (on) {
-                fill.setColor(dark ? Look.INK : Look.DAY_INK);
-                float r = 14 * k;
-                c.drawRoundRect(cell, r, r, fill);
-            }
-            int color = on ? (dark ? Look.ON_INK : Look.DAY_GROUND) : Ui.alpha(ink, 0.72f);
+            fill.setColor(on ? ink : Ui.alpha(ink, i >= 26 ? 0.08f : 0.025f));
+            c.drawRoundRect(cell, 14 * k, 14 * k, fill);
+            int color = on ? dark ? Look.ON_INK : Look.DAY_GROUND : Ui.alpha(ink, 0.86f);
             int code = code(i);
-            if (code >= 0) {
-                text.setColor(color);
-                c.drawText(String.valueOf((char) code), cell.centerX(), cell.centerY() + Ui.halfCap(text) - 2 * k, text);
-            } else if (code == NUMBERS) {
-                text.setColor(color);
-                c.drawText(chars == LETTERS ? "123" : "abc", cell.centerX(), cell.centerY() + Ui.halfCap(text), text);
-            } else {
-                Path p = code == SPACE ? space : code == DELETE ? delete : mic;
-                icon.setColor(color);
+            if (code == DELETE) {
+                icon.setColor(color); icon.setStrokeWidth(1.8f);
                 float size = 30 * k;
-                c.save();
-                c.translate(cell.centerX() - size / 2, cell.centerY() - size / 2);
-                c.scale(size / 24f, size / 24f);
-                c.drawPath(p, icon);
-                c.restore();
+                c.save(); c.translate(cell.centerX() - size / 2, cell.centerY() - size / 2); c.scale(size / 24f, size / 24f);
+                c.drawPath(delete, icon); c.restore();
+            } else {
+                text.setTextSize((code >= 0 ? 32 : 25) * k); text.setColor(color);
+                c.drawText(label(code), cell.centerX(), cell.centerY() + Ui.halfCap(text), text);
             }
         }
     }
