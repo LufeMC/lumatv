@@ -26,7 +26,7 @@ public class VisionQuestTests extends TvTest {
             List<ContinueWatching.Entry> followed = NewEpisodes.followed(getTargetContext(), recent);
             boolean retained = false; for (ContinueWatching.Entry e : followed) if (imdb.equals(e.imdb)) retained = true;
             if (!retained) throw new AssertionError("The reported series was lost from followed history");
-            List<NewEpisodes.Notice> waiting = NewEpisodes.waiting(getTargetContext(), followed, now);
+            List<NewEpisodes.Notice> waiting = NewEpisodes.retained(getTargetContext(), followed, now);
             NewEpisodes.Notice match = null; for (NewEpisodes.Notice n : waiting) if (imdb.equals(n.entry.imdb)) match = n;
             report.put("retained", retained).put("waiting", match != null);
             if (match == null) throw new AssertionError("The reported completed episode did not produce a waiting card");

@@ -30,6 +30,8 @@ A confirmed series ending removes the waiting state when no future episode is li
 This behavior also reads completed episodes with zero resume offset from the Stremio library.
 Recent temporary watch-history entries do not require a saved-library action.
 It does not change the Stremio application's own watching-list rules.
+Expired release notices do not remove the series.
+Your series retains the correct unwatched episode as Up next.
 
 ## Your list (21)
 

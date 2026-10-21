@@ -86,25 +86,30 @@ public class NewEpisodeTests extends TvTest {
             JSONObject timeline = NewEpisodes.timeline(show.imdb, metadata, now);
             getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().putString("timeline:" + show.imdb, timeline.toString()).commit();
             show.episode = 2; show.video = "tt0898266:10:2"; show.completed = true;
-            List<NewEpisodes.Notice> waiting = NewEpisodes.waiting(getTargetContext(), Collections.singletonList(show), now);
+            List<NewEpisodes.Notice> waiting = NewEpisodes.retained(getTargetContext(), Collections.singletonList(show), now);
             check(waiting.size() == 1 && waiting.get(0).entry.video.equals("tt0898266:10:3"), "finishing the latest released episode keeps the series with its next release");
-            check(NewEpisodes.waiting(getTargetContext(), Collections.singletonList(show), now + 120000).isEmpty(), "a released episode replaces the waiting state");
+            check(!NewEpisodes.retained(getTargetContext(), Collections.singletonList(show), now + 120000).get(0).waiting, "a released episode replaces the waiting state");
             notices = NewEpisodes.cached(getTargetContext(), Collections.singletonList(show), now + 120000);
             check(notices.size() == 1 && notices.get(0).entry.video.equals("tt0898266:10:3"), "the scheduled episode becomes a notice without waiting for another metadata request");
+            getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().putString("timeline:" + show.imdb, NewEpisodes.timeline(show.imdb, metadata, now, show).toString()).commit();
+            long later = now + NewEpisodes.WINDOW + 120000;
+            check(NewEpisodes.cached(getTargetContext(), Collections.singletonList(show), later).isEmpty(), "an old release no longer appears as new");
+            List<NewEpisodes.Notice> retained = NewEpisodes.retained(getTargetContext(), Collections.singletonList(show), later);
+            check(retained.size() == 1 && !retained.get(0).waiting && retained.get(0).entry.video.equals("tt0898266:10:3"), "the series and correct next episode remain after its release notice expires");
             metadata.put("status", "Ended"); metadata.getJSONArray("videos").remove(2);
             getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().putString("timeline:" + show.imdb, NewEpisodes.timeline(show.imdb, metadata, now).toString()).commit();
-            check(NewEpisodes.waiting(getTargetContext(), Collections.singletonList(show), now).isEmpty(), "a confirmed series ending does not create a waiting card");
+            check(NewEpisodes.retained(getTargetContext(), Collections.singletonList(show), now).isEmpty(), "a confirmed series ending does not create a waiting card");
             metadata.put("status", "Returning Series");
             getTargetContext().getSharedPreferences(NewEpisodes.PREFS, 0).edit().putString("timeline:" + show.imdb, NewEpisodes.timeline(show.imdb, metadata, now).toString()).commit();
-            check(NewEpisodes.waiting(getTargetContext(), Collections.singletonList(show), now).size() == 1, "an ongoing series remains visible when the next date is unknown");
+            check(NewEpisodes.retained(getTargetContext(), Collections.singletonList(show), now).size() == 1, "an ongoing series remains visible when the next date is unknown");
             item = LibrarySync.item(show.imdb, "tv", show.title, "", true);
             item.getJSONObject("state").put("video_id", show.video).put("flaggedWatched", 1).put("timeOffset", 0).put("lastWatched", java.time.Instant.ofEpochMilli(now).toString());
             LibrarySync.store(getTargetContext(), new JSONArray().put(item));
             List<ContinueWatching.Entry> imported = NewEpisodes.followed(getTargetContext(), Collections.emptyList());
             check(imported.size() == 1 && imported.get(0).completed, "the full Stremio library retains a finished episode with zero resume offset");
-            check(NewEpisodes.waiting(getTargetContext(), imported, now).size() == 1, "the imported series remains on Home while waiting");
+            check(NewEpisodes.retained(getTargetContext(), imported, now).size() == 1, "the imported series remains on Home while waiting");
             item.put("removed", true).put("temp", true); LibrarySync.store(getTargetContext(), new JSONArray().put(item));
-            check(NewEpisodes.waiting(getTargetContext(), NewEpisodes.followed(getTargetContext(), Collections.emptyList()), now).size() == 1,
+            check(NewEpisodes.retained(getTargetContext(), NewEpisodes.followed(getTargetContext(), Collections.emptyList()), now).size() == 1,
                     "recent temporary Stremio watch history remains visible without a saved-library action");
             item.put("temp", false); LibrarySync.store(getTargetContext(), new JSONArray().put(item));
             check(NewEpisodes.followed(getTargetContext(), Collections.emptyList()).isEmpty(), "an explicit library removal remains effective");

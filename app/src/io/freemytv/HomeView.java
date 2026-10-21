@@ -342,8 +342,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         overlay.setVisibility(INVISIBLE);
         loadRecent();
         entries = ContinueWatching.cached(a);
-        episodeNotices = NewEpisodes.cached(a, NewEpisodes.followed(a, entries), System.currentTimeMillis());
-        waitingSeries = NewEpisodes.waiting(a, NewEpisodes.followed(a, entries), System.currentTimeMillis());
+        List<ContinueWatching.Entry> followed = NewEpisodes.followed(a, entries);
+        episodeNotices = NewEpisodes.cached(a, followed, System.currentTimeMillis());
+        waitingSeries = NewEpisodes.retained(a, followed, System.currentTimeMillis());
         buildRow();
         online = hasNetwork();
         zone = restZone();
@@ -522,7 +523,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             final List<ContinueWatching.Entry> loaded = ContinueWatching.refresh(c);
             final List<ContinueWatching.Entry> followed = NewEpisodes.followed(c, loaded);
             final List<NewEpisodes.Notice> notices = NewEpisodes.cached(c, followed, System.currentTimeMillis());
-            final List<NewEpisodes.Notice> waiting = NewEpisodes.waiting(c, followed, System.currentTimeMillis());
+            final List<NewEpisodes.Notice> waiting = NewEpisodes.retained(c, followed, System.currentTimeMillis());
             handler.post(() -> {
                 if (!running) return;
                 entries = loaded;
@@ -534,7 +535,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (online) NewEpisodes.refresh(c, followed, () -> noticeVisible, () -> handler.post(() -> {
                     if (!running) return;
                     episodeNotices = NewEpisodes.cached(c, followed, System.currentTimeMillis());
-                    waitingSeries = NewEpisodes.waiting(c, followed, System.currentTimeMillis());
+                    waitingSeries = NewEpisodes.retained(c, followed, System.currentTimeMillis());
                     buildRow(); changed();
                 }));
             });
@@ -570,13 +571,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             row.add(card);
         }
         for (NewEpisodes.Notice notice : waitingSeries) {
+            boolean announced = false;
+            for (NewEpisodes.Notice fresh : episodeNotices) if (fresh.key().equals(notice.key())) announced = true;
+            if (announced) continue;
             Card card = cwCard(notice.entry, Ui.tr("Suas séries", "Your series"));
             card.kind = RELEASE; card.key = "waiting:" + notice.entry.imdb;
-            card.kicker = Ui.tr("Aguardando o próximo episódio", "Waiting for the next episode");
-            card.meta = card.sub = notice.released > 0 ? Ui.tr("Próximo episódio: ", "Next episode: ")
+            card.kicker = notice.waiting ? Ui.tr("Aguardando o próximo episódio", "Waiting for the next episode") : Ui.tr("A seguir", "Up next");
+            card.meta = card.sub = !notice.waiting ? notice.entry.code() : notice.released > 0 ? Ui.tr("Próximo episódio: ", "Next episode: ")
                     + android.text.format.DateFormat.getMediumDateFormat(getContext()).format(new java.util.Date(notice.released)) : "";
             card.left = ""; card.progress = -1;
-            card.primary = card.secondary = Ui.tr("Ver série", "View series"); row.add(card);
+            card.primary = card.secondary = notice.waiting ? Ui.tr("Ver série", "View series") : Ui.tr("Ver episódio", "View episode"); row.add(card);
         }
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (ContinueWatching.Entry e : entries) seen.add(ContinueWatching.showKey(e));
