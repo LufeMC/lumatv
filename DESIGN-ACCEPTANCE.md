@@ -98,5 +98,6 @@ Its display offers no mode that matches 24-fps playback.
 The player preserves the current display mode when a matching mode is unavailable.
 
 Two-physical-TV activation remains outside the current authorized device scope.
-The encrypted signing backup still needs an off-computer destination.
+The encrypted signing backup has a verified private off-computer copy.
+Separate recovery-password storage remains pending.
 These external actions remain recorded in [VERIFICATION.md](VERIFICATION.md).

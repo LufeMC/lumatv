@@ -49,7 +49,7 @@ The identifiers below group the 55 approved improvements without changing their 
 | U20 | Search add-on catalogs | Logic: supported catalogs and identifiers. Device: asynchronous integration with public search results. |
 | U21 | Automatic white application logos | Device: installed application row and text fallback; isolated reorder and removal. |
 | T1 | Public repository safety | Secret scanner, ignored household file, upstream attribution, and pre-push hook implemented. |
-| T2 | Protect the signing key | Password rotated in Keychain. AES-256 backup mounted and checked. Off-computer copy and separate password storage remain pending. |
+| T2 | Protect the signing key | Password rotated in Keychain. AES-256 backup mounted and checked. The private off-computer copy passed a downloaded checksum comparison. Separate password storage remains pending. |
 | T3 | Limit backward-buffer memory | Logic: bitrate limits through 200 Mbps. Device: 55-Mbps 1080p playback passed with zero dropped frames over twenty seconds. The G3 reports no 4K AVC or HEVC decoder. Both unsupported source types are excluded automatically. |
 | T4 | Recover focus after a card disappears | Device: adjacent-card selection, identity preservation after insertion, and valid selection after removal passed. |
 | T5 | Visible day-mode focus | Shared focus treatment implemented. Dark is now the default. Optional day mode remains available. |
@@ -135,7 +135,8 @@ The code includes the approved feature groups.
 Full operational acceptance remains incomplete while the pending checks above remain unresolved.
 Do not describe all 55 improvements as fully verified.
 Do not publish a release based only on this integration record.
-The signing backup still needs an off-computer destination and a separately stored recovery password.
+The signing backup has a verified private off-computer copy.
+The recovery password still needs separate password-manager storage.
 Physical two-TV synchronization needs a separate authorized device session.
 
 ## Local updater integration
@@ -178,7 +179,7 @@ Unknown source bitrates still require an estimate.
 
 See [DESIGN-ACCEPTANCE.md](DESIGN-ACCEPTANCE.md) for the selected design states and their references.
 The source includes the approved feature groups.
-The remaining external actions are the off-computer backup and activation between two physical TVs.
+The remaining external actions are separate recovery-password storage and activation between two physical TVs.
 The Hisense remains excluded under the current device instruction.
 
 ## Installed completion build
@@ -211,3 +212,11 @@ All six protected household preference checksums remained unchanged.
 Encrypted setup remained available, with Celsius selected.
 The temporary test package and large generated video files were removed.
 No GitHub release was published.
+
+## Signing backup follow-up
+
+The encrypted backup was saved to private Google Drive on October 20, 2026.
+A complete download matched the local SHA-256 checksum.
+The Drive permission readback showed only the owner.
+The recovery password was not uploaded.
+It remains in Mac Keychain until the user saves it separately in a password manager.
